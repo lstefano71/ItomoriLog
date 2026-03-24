@@ -1,0 +1,63 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:ItomoriLog.UI.ViewModels"
+             xmlns:core="using:ItomoriLog.Core.Storage"
+             x:Class="ItomoriLog.UI.Views.WelcomeView"
+             x:DataType="vm:WelcomeViewModel">
+
+  <Grid ColumnDefinitions="*,*" Margin="24">
+    <!-- Left: Create New Session -->
+    <Border Grid.Column="0" Background="{StaticResource Itomori.Panel}" 
+            CornerRadius="8" Padding="24" Margin="0,0,12,0">
+      <StackPanel Spacing="16">
+        <TextBlock Text="Create New Session" FontSize="20" FontWeight="SemiBold"
+                   Foreground="{StaticResource Brush.SakuraPink}" />
+
+        <TextBlock Text="Title" Foreground="{StaticResource Itomori.SubtleForeground}" />
+        <TextBox Text="{Binding SessionTitle}" Watermark="My Investigation" />
+
+        <TextBlock Text="Description (optional)" Foreground="{StaticResource Itomori.SubtleForeground}" />
+        <TextBox Text="{Binding SessionDescription}" Watermark="What are you investigating?" />
+
+        <TextBlock Text="Session Path" Foreground="{StaticResource Itomori.SubtleForeground}" />
+        <TextBox Text="{Binding SessionPath}" IsReadOnly="True" />
+
+        <TextBlock Text="Default Timezone (optional)" Foreground="{StaticResource Itomori.SubtleForeground}" />
+        <TextBox Text="{Binding DefaultTimezone}" Watermark="e.g., Europe/Rome" />
+
+        <Button Content="Create Session" Command="{Binding CreateSessionCommand}"
+                HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+      </StackPanel>
+    </Border>
+
+    <!-- Right: Recent Sessions -->
+    <Border Grid.Column="1" Background="{StaticResource Itomori.Panel}"
+            CornerRadius="8" Padding="24" Margin="12,0,0,0">
+      <DockPanel>
+        <TextBlock DockPanel.Dock="Top" Text="Recent Sessions" FontSize="20" FontWeight="SemiBold"
+                   Foreground="{StaticResource Brush.NeonCyan}" Margin="0,0,0,16" />
+
+        <ListBox ItemsSource="{Binding RecentSessions}" 
+                 Background="Transparent" BorderThickness="0">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="core:RecentSessionEntry">
+              <Button Command="{Binding $parent[ListBox].((vm:WelcomeViewModel)DataContext).OpenSessionCommand}"
+                      CommandParameter="{Binding}"
+                      Background="Transparent" BorderThickness="0" Padding="8"
+                      HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold"
+                             Foreground="{StaticResource Itomori.Foreground}" />
+                  <TextBlock Text="{Binding SessionFolder}" FontSize="11"
+                             Foreground="{StaticResource Itomori.SubtleForeground}"
+                             TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+              </Button>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </DockPanel>
+    </Border>
+  </Grid>
+
+</UserControl>

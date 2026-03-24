@@ -1,0 +1,44 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:ItomoriLog.UI.ViewModels"
+             x:Class="ItomoriLog.UI.Views.CrashRecoveryBannerView"
+             x:DataType="vm:CrashRecoveryViewModel"
+             IsVisible="{Binding IsVisible}">
+
+  <Border Background="{StaticResource Brush.Warn}"
+          Padding="12,8"
+          CornerRadius="0">
+    <Grid ColumnDefinitions="*,Auto,Auto">
+      <!-- Warning message -->
+      <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+        <TextBlock Text="⚠" FontSize="16" VerticalAlignment="Center"
+                   Foreground="#111418" />
+        <TextBlock Text="{Binding Message}"
+                   FontSize="13" FontWeight="SemiBold"
+                   Foreground="#111418"
+                   VerticalAlignment="Center" />
+      </StackPanel>
+
+      <!-- Resume button -->
+      <Button Grid.Column="1"
+              Content="Resume"
+              Command="{Binding ResumeCommand}"
+              Margin="8,0"
+              Padding="12,4"
+              FontSize="12"
+              Background="#111418"
+              Foreground="#D6E2F0" />
+
+      <!-- Dismiss button -->
+      <Button Grid.Column="2"
+              Content="Dismiss"
+              Command="{Binding DismissCommand}"
+              Padding="12,4"
+              FontSize="12"
+              Background="Transparent"
+              BorderBrush="#111418"
+              BorderThickness="1"
+              Foreground="#111418" />
+    </Grid>
+  </Border>
+</UserControl>

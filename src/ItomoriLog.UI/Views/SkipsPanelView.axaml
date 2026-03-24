@@ -1,0 +1,91 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:ItomoriLog.UI.ViewModels"
+             x:Class="ItomoriLog.UI.Views.SkipsPanelView"
+             x:DataType="vm:SkipsPanelViewModel">
+
+  <Border Background="{StaticResource Brush.Slate}" CornerRadius="4" Padding="12">
+    <DockPanel>
+      <!-- Header -->
+      <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+        <StackPanel Orientation="Horizontal" Spacing="12">
+          <TextBlock Text="Skipped Records" FontSize="16" FontWeight="SemiBold"
+                     Foreground="{StaticResource Brush.Mist}" VerticalAlignment="Center" />
+          <Border Background="#2A2F3A" CornerRadius="4" Padding="8,2" VerticalAlignment="Center">
+            <TextBlock Text="{Binding TotalSkipCount, StringFormat='{}{0:N0} skips'}"
+                       FontSize="12" Foreground="{StaticResource Brush.NeonCyan}" />
+          </Border>
+        </StackPanel>
+        <ComboBox Grid.Column="1" ItemsSource="{Binding ReasonFilterOptions}"
+                  SelectedItem="{Binding SelectedReasonFilter}"
+                  Width="180" VerticalAlignment="Center">
+          <ComboBox.ItemTemplate>
+            <DataTemplate>
+              <TextBlock Text="{Binding}" Foreground="{StaticResource Itomori.Foreground}" />
+            </DataTemplate>
+          </ComboBox.ItemTemplate>
+        </ComboBox>
+      </Grid>
+
+      <!-- Grouped skip list -->
+      <TreeView ItemsSource="{Binding SkipGroups}">
+        <TreeView.ItemTemplate>
+          <TreeDataTemplate ItemsSource="{Binding Segments}" x:DataType="vm:SkipGroupViewModel">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="📄" FontSize="14" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding SourcePath}" FontWeight="SemiBold"
+                         Foreground="{StaticResource Itomori.Foreground}"
+                         TextTrimming="CharacterEllipsis" MaxWidth="300" />
+              <Border Background="#2A2F3A" CornerRadius="3" Padding="6,1">
+                <TextBlock Text="{Binding TotalRecordCount, StringFormat='{}{0:N0}'}"
+                           FontSize="11" Foreground="{StaticResource Itomori.SubtleForeground}" />
+              </Border>
+            </StackPanel>
+          </TreeDataTemplate>
+        </TreeView.ItemTemplate>
+
+        <TreeView.Styles>
+          <Style Selector="TreeViewItem">
+            <Setter Property="IsExpanded" Value="True" />
+          </Style>
+        </TreeView.Styles>
+
+        <TreeView.DataTemplates>
+          <DataTemplate DataType="vm:SkipSegmentViewModel">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto" Margin="4,2">
+              <!-- Reason code badge -->
+              <Border CornerRadius="3" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center"
+                      Background="#3A2020">
+                <Border.Styles>
+                  <Style Selector="Border.warn">
+                    <Setter Property="Background" Value="#3A3520" />
+                  </Style>
+                </Border.Styles>
+                <TextBlock Text="{Binding ReasonCode}" FontSize="11" FontWeight="SemiBold"
+                           Foreground="{StaticResource Itomori.Foreground}" />
+              </Border>
+
+              <!-- Record count -->
+              <TextBlock Grid.Column="1" Margin="0,0,12,0" VerticalAlignment="Center"
+                         Text="{Binding RecordCount, StringFormat='{}{0:N0} records'}"
+                         FontSize="11" Foreground="{StaticResource Itomori.SubtleForeground}" />
+
+              <!-- Sample preview -->
+              <TextBlock Grid.Column="2" Text="{Binding SamplePreview}"
+                         FontSize="11" Foreground="{StaticResource Itomori.SubtleForeground}"
+                         TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+
+              <!-- Jump button -->
+              <Button Grid.Column="3" Content="Jump ⤴"
+                      Command="{Binding $parent[TreeView].((vm:SkipsPanelViewModel)DataContext).JumpToContextCommand}"
+                      CommandParameter="{Binding}"
+                      FontSize="11" Padding="6,2" Background="Transparent" BorderThickness="0"
+                      Foreground="{StaticResource Brush.NeonCyan}" VerticalAlignment="Center" />
+            </Grid>
+          </DataTemplate>
+        </TreeView.DataTemplates>
+      </TreeView>
+    </DockPanel>
+  </Border>
+
+</UserControl>

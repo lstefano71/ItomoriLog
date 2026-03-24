@@ -1,0 +1,40 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:ItomoriLog.UI.ViewModels"
+             x:Class="ItomoriLog.UI.Views.TimelineCanvasView"
+             x:DataType="vm:TimelineViewModel"
+             Height="120"
+             ClipToBounds="True">
+
+  <Border Background="{StaticResource Itomori.Panel}" CornerRadius="4" Padding="0">
+    <Grid RowDefinitions="*,Auto">
+      <!-- The canvas is rendered in code-behind using DrawingContext -->
+      <Canvas Name="TimelineCanvas"
+              Grid.Row="0"
+              Background="Transparent" />
+
+      <!-- Status bar -->
+      <Border Grid.Row="1" Padding="8,2" Background="#1A1F28">
+        <StackPanel Orientation="Horizontal" Spacing="12">
+          <TextBlock FontSize="10" Foreground="{StaticResource Itomori.SubtleForeground}">
+            <TextBlock.Text>
+              <MultiBinding StringFormat="Bin: {0}">
+                <Binding Path="CurrentBinWidth" />
+              </MultiBinding>
+            </TextBlock.Text>
+          </TextBlock>
+          <TextBlock FontSize="10" Foreground="{StaticResource Itomori.SubtleForeground}"
+                     IsVisible="{Binding SelectedStart, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <TextBlock.Text>
+              <MultiBinding StringFormat="Selection: {0:HH:mm:ss} — {1:HH:mm:ss}">
+                <Binding Path="SelectedStart" />
+                <Binding Path="SelectedEnd" />
+              </MultiBinding>
+            </TextBlock.Text>
+          </TextBlock>
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+
+</UserControl>

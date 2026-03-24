@@ -1,0 +1,41 @@
+<ResourceDictionary
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!-- Brand Colors -->
+  <Color x:Key="Itomori.SakuraPink">#FF6DAE</Color>
+  <Color x:Key="Itomori.NeonCyan">#0EA5E9</Color>
+  <Color x:Key="Itomori.Onyx">#111418</Color>
+  <Color x:Key="Itomori.Slate">#1F2430</Color>
+  <Color x:Key="Itomori.Mist">#D6E2F0</Color>
+  <Color x:Key="Itomori.Grey">#9CA3AF</Color>
+
+  <!-- Severity Colors -->
+  <Color x:Key="Itomori.Info">#38BDF8</Color>
+  <Color x:Key="Itomori.Warn">#F59E0B</Color>
+  <Color x:Key="Itomori.Error">#EF4444</Color>
+  <Color x:Key="Itomori.Debug">#9CA3AF</Color>
+
+  <!-- Brand Brushes -->
+  <SolidColorBrush x:Key="Brush.SakuraPink" Color="{StaticResource Itomori.SakuraPink}"/>
+  <SolidColorBrush x:Key="Brush.NeonCyan" Color="{StaticResource Itomori.NeonCyan}"/>
+  <SolidColorBrush x:Key="Brush.Onyx" Color="{StaticResource Itomori.Onyx}"/>
+  <SolidColorBrush x:Key="Brush.Slate" Color="{StaticResource Itomori.Slate}"/>
+  <SolidColorBrush x:Key="Brush.Mist" Color="{StaticResource Itomori.Mist}"/>
+  <SolidColorBrush x:Key="Brush.Grey" Color="{StaticResource Itomori.Grey}"/>
+
+  <!-- Severity Brushes -->
+  <SolidColorBrush x:Key="Brush.Info" Color="{StaticResource Itomori.Info}"/>
+  <SolidColorBrush x:Key="Brush.Warn" Color="{StaticResource Itomori.Warn}"/>
+  <SolidColorBrush x:Key="Brush.Error" Color="{StaticResource Itomori.Error}"/>
+  <SolidColorBrush x:Key="Brush.Debug" Color="{StaticResource Itomori.Debug}"/>
+
+  <!-- Semantic Brushes -->
+  <SolidColorBrush x:Key="Itomori.Background" Color="{StaticResource Itomori.Onyx}"/>
+  <SolidColorBrush x:Key="Itomori.Panel" Color="{StaticResource Itomori.Slate}"/>
+  <SolidColorBrush x:Key="Itomori.Foreground" Color="{StaticResource Itomori.Mist}"/>
+  <SolidColorBrush x:Key="Itomori.SubtleForeground" Color="{StaticResource Itomori.Grey}"/>
+  <SolidColorBrush x:Key="Itomori.AccentPrimary" Color="{StaticResource Itomori.SakuraPink}"/>
+  <SolidColorBrush x:Key="Itomori.AccentSecondary" Color="{StaticResource Itomori.NeonCyan}"/>
+
+</ResourceDictionary>

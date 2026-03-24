@@ -1,0 +1,75 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:ItomoriLog.UI.ViewModels"
+             x:Class="ItomoriLog.UI.Views.DetectionWizardView"
+             x:DataType="vm:DetectionWizardViewModel">
+
+  <Border Background="{StaticResource Itomori.Panel}" CornerRadius="12" Padding="24"
+          MaxWidth="700" MaxHeight="600" HorizontalAlignment="Center" VerticalAlignment="Center"
+          BoxShadow="0 8 32 0 #80000000">
+    <Grid RowDefinitions="Auto,*,Auto,Auto">
+
+      <!-- Header -->
+      <StackPanel Grid.Row="0" Spacing="4" Margin="0,0,0,16">
+        <TextBlock Text="Format Detection Wizard"
+                   FontSize="20" FontWeight="SemiBold"
+                   Foreground="{StaticResource Brush.SakuraPink}" />
+        <TextBlock Text="Auto-detection confidence is below 95%. Please choose a format."
+                   FontSize="13"
+                   Foreground="{StaticResource Itomori.SubtleForeground}" />
+      </StackPanel>
+
+      <!-- Candidate list + Preview -->
+      <Grid Grid.Row="1" ColumnDefinitions="220,*" Margin="0,0,0,12">
+
+        <!-- Candidate list -->
+        <Border Grid.Column="0" Background="{StaticResource Itomori.Background}"
+                CornerRadius="6" Padding="4" Margin="0,0,8,0">
+          <ListBox ItemsSource="{Binding Candidates}"
+                   SelectedItem="{Binding SelectedCandidate}"
+                   Background="Transparent" BorderThickness="0">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <Grid ColumnDefinitions="*,Auto" Margin="4,6">
+                  <TextBlock Grid.Column="0" Text="{Binding FormatName}"
+                             Foreground="{StaticResource Itomori.Foreground}"
+                             FontWeight="SemiBold" VerticalAlignment="Center" />
+                  <TextBlock Grid.Column="1" Text="{Binding ConfidenceDisplay}"
+                             Foreground="{StaticResource Brush.NeonCyan}"
+                             FontSize="12" VerticalAlignment="Center" Margin="8,0,0,0" />
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Border>
+
+        <!-- Preview area -->
+        <Border Grid.Column="1" Background="{StaticResource Itomori.Background}"
+                CornerRadius="6" Padding="12">
+          <ScrollViewer>
+            <TextBlock Text="{Binding PreviewText}"
+                       FontFamily="Cascadia Mono, Consolas, monospace" FontSize="12"
+                       Foreground="{StaticResource Itomori.Foreground}"
+                       TextWrapping="Wrap" />
+          </ScrollViewer>
+        </Border>
+      </Grid>
+
+      <!-- Status -->
+      <TextBlock Grid.Row="2" Text="{Binding StatusMessage}"
+                 FontSize="12" Foreground="{StaticResource Itomori.SubtleForeground}"
+                 Margin="0,0,0,12" />
+
+      <!-- Action buttons -->
+      <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
+        <Button Content="Cancel" Command="{Binding CancelCommand}"
+                MinWidth="100" HorizontalContentAlignment="Center" />
+        <Button Content="Confirm" Command="{Binding ConfirmCommand}"
+                MinWidth="100" HorizontalContentAlignment="Center"
+                Background="{StaticResource Brush.SakuraPink}"
+                Foreground="White" FontWeight="SemiBold" />
+      </StackPanel>
+
+    </Grid>
+  </Border>
+</UserControl>

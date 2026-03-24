@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ItomoriLog.App/ItomoriLog.App.csproj" />
+    <Project Path="src/ItomoriLog.Core/ItomoriLog.Core.csproj" />
+    <Project Path="src/ItomoriLog.UI/ItomoriLog.UI.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ItomoriLog.Tests/ItomoriLog.Tests.csproj" />
+  </Folder>
+</Solution>

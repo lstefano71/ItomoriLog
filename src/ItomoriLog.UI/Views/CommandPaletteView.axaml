@@ -1,0 +1,72 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:ItomoriLog.UI.ViewModels"
+             x:Class="ItomoriLog.UI.Views.CommandPaletteView"
+             x:DataType="vm:CommandPaletteViewModel"
+             IsVisible="{Binding IsOpen}">
+
+  <!-- Dark overlay -->
+  <Grid>
+    <Border Background="#CC111418"
+            PointerPressed="OnOverlayPressed" />
+
+    <!-- Centered palette panel -->
+    <Border Background="#1F2430"
+            CornerRadius="8"
+            Width="500"
+            MaxHeight="400"
+            VerticalAlignment="Top"
+            Margin="0,120,0,0"
+            HorizontalAlignment="Center"
+            BoxShadow="0 8 32 0 #80000000">
+      <DockPanel>
+        <!-- Search box -->
+        <TextBox DockPanel.Dock="Top"
+                 Name="SearchBox"
+                 Text="{Binding SearchText}"
+                 Watermark="Type a command..."
+                 Margin="12"
+                 FontSize="16"
+                 KeyDown="OnSearchBoxKeyDown" />
+
+        <!-- Filtered command list -->
+        <ListBox ItemsSource="{Binding FilteredCommands}"
+                 SelectedItem="{Binding SelectedCommand}"
+                 Background="Transparent"
+                 BorderThickness="0"
+                 Margin="4,0,4,8"
+                 MaxHeight="280"
+                 Name="CommandList">
+          <ListBox.Styles>
+            <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+              <Setter Property="Background" Value="#0EA5E9" />
+            </Style>
+            <Style Selector="ListBoxItem:selected">
+              <Setter Property="Background" Value="#0EA5E9" />
+            </Style>
+          </ListBox.Styles>
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:PaletteCommand">
+              <Grid ColumnDefinitions="*,Auto" Margin="8,6">
+                <StackPanel>
+                  <TextBlock Text="{Binding Name}"
+                             FontSize="14" FontWeight="SemiBold"
+                             Foreground="#D6E2F0" />
+                  <TextBlock Text="{Binding Description}"
+                             FontSize="11"
+                             Foreground="#9CA3AF" />
+                </StackPanel>
+                <TextBlock Grid.Column="1"
+                           Text="{Binding KeyboardShortcut}"
+                           FontSize="11"
+                           Foreground="#9CA3AF"
+                           VerticalAlignment="Center"
+                           IsVisible="{Binding KeyboardShortcut, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </DockPanel>
+    </Border>
+  </Grid>
+</UserControl>
