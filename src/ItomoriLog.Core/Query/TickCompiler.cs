@@ -324,17 +324,44 @@ public sealed class TickCompiler : ITickCompiler
         private static Token? ConsumeVariable(string input, ref int pos)
         {
             var remaining = input.AsSpan(pos);
-            string[] vars = ["$yesterday", "$tomorrow", "$today", "$latest", "$first", "$now"];
+            string[] knownVariables = ["$yesterday", "$tomorrow", "$today", "$latest", "$first", "$start", "$end", "$now"];
 
-            foreach (var v in vars)
+            foreach (var variable in knownVariables)
             {
-                if (remaining.StartsWith(v, StringComparison.OrdinalIgnoreCase))
+                if (remaining.StartsWith(variable, StringComparison.OrdinalIgnoreCase)
+                    && IsVariableBoundary(input, pos + variable.Length))
                 {
-                    pos += v.Length;
-                    return new Token(TokenKind.Variable, v.ToLowerInvariant());
+                    pos += variable.Length;
+                    return new Token(TokenKind.Variable, variable.ToLowerInvariant());
                 }
             }
-            return null;
+
+            var start = pos;
+            pos++; // consume $
+            while (pos < input.Length && (char.IsLetterOrDigit(input[pos]) || input[pos] == '_'))
+                pos++;
+
+            if (pos <= start + 1)
+            {
+                pos = start;
+                return null;
+            }
+
+            return new Token(TokenKind.Variable, input[start..pos].ToLowerInvariant());
+        }
+
+        private static bool IsVariableBoundary(string input, int pos)
+        {
+            if (pos >= input.Length)
+                return true;
+
+            var next = input[pos];
+            if (!char.IsLetterOrDigit(next) && next != '_')
+                return true;
+
+            return (next == 'T' || next == 't')
+                && pos + 1 < input.Length
+                && char.IsDigit(input[pos + 1]);
         }
 
         private static bool TryConsumeIsoLiteral(string input, ref int pos, out Token token)
@@ -1181,13 +1208,20 @@ public sealed class TickCompiler : ITickCompiler
                 "$today" => new Anchor(new DateTimeOffset(now.Date, now.Offset), true),
                 "$yesterday" => new Anchor(new DateTimeOffset(now.Date.AddDays(-1), now.Offset), true),
                 "$tomorrow" => new Anchor(new DateTimeOffset(now.Date.AddDays(1), now.Offset), true),
+                "$start" => context.FirstTimestamp.HasValue
+                    ? new Anchor(context.FirstTimestamp.Value, false)
+                    : throw new TickCompileException("$start requires FirstTimestamp in context."),
                 "$first" => context.FirstTimestamp.HasValue
                     ? new Anchor(context.FirstTimestamp.Value, false)
                     : throw new TickCompileException("$first requires FirstTimestamp in context."),
+                "$end" => context.LatestTimestamp.HasValue
+                    ? new Anchor(context.LatestTimestamp.Value, false)
+                    : throw new TickCompileException("$end requires LatestTimestamp in context."),
                 "$latest" => context.LatestTimestamp.HasValue
                     ? new Anchor(context.LatestTimestamp.Value, false)
                     : throw new TickCompileException("$latest requires LatestTimestamp in context."),
-                _ => new Anchor(now, false)
+                _ when name.StartsWith('$') => throw new TickCompileException($"Unknown variable '{name}'."),
+                _ => throw new TickCompileException($"Unknown token '{name}'.")
             };
         }
 
@@ -1224,13 +1258,20 @@ public sealed class TickCompiler : ITickCompiler
                     "$today" => [new Anchor(ConvertLocalDateTimeToTimezone(localStart, resolution), true)],
                     "$yesterday" => [new Anchor(ConvertLocalDateTimeToTimezone(localStart.AddDays(-1), resolution), true)],
                     "$tomorrow" => [new Anchor(ConvertLocalDateTimeToTimezone(localStart.AddDays(1), resolution), true)],
+                    "$start" => context.FirstTimestamp.HasValue
+                        ? [new Anchor(ConvertInstantToTimezone(context.FirstTimestamp.Value, resolution), false)]
+                        : throw new TickCompileException("$start requires FirstTimestamp in context."),
                     "$first" => context.FirstTimestamp.HasValue
                         ? [new Anchor(ConvertInstantToTimezone(context.FirstTimestamp.Value, resolution), false)]
                         : throw new TickCompileException("$first requires FirstTimestamp in context."),
+                    "$end" => context.LatestTimestamp.HasValue
+                        ? [new Anchor(ConvertInstantToTimezone(context.LatestTimestamp.Value, resolution), false)]
+                        : throw new TickCompileException("$end requires LatestTimestamp in context."),
                     "$latest" => context.LatestTimestamp.HasValue
                         ? [new Anchor(ConvertInstantToTimezone(context.LatestTimestamp.Value, resolution), false)]
                         : throw new TickCompileException("$latest requires LatestTimestamp in context."),
-                    _ => []
+                    _ when vn.Name.StartsWith('$') => throw new TickCompileException($"Unknown variable '{vn.Name}'."),
+                    _ => throw new TickCompileException($"Unknown token '{vn.Name}'.")
                 };
             }
 

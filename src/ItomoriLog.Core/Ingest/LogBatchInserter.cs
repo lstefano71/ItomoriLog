@@ -7,7 +7,7 @@ namespace ItomoriLog.Core.Ingest;
 public sealed class LogBatchInserter
 {
     private readonly DuckDBConnection _connection;
-    private const int RowsPerStatement = 2_000;
+    private const int RowsPerStatement = 5_000;
 
     public LogBatchInserter(DuckDBConnection connection)
     {

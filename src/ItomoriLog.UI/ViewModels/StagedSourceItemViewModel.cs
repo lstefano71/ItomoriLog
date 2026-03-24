@@ -1,21 +1,32 @@
 using ReactiveUI;
 using System.Collections.ObjectModel;
 using ItomoriLog.Core.Ingest;
-using System.Linq;
 
 namespace ItomoriLog.UI.ViewModels;
 
+public sealed record DetectionDetailViewModel(string Label, string Value);
+
 public sealed record DetectionChoiceViewModel(
     string FormatName,
+    string ShortLabel,
+    string Summary,
     double Confidence,
-    DetectionResult Detection)
+    DetectionResult Detection,
+    IReadOnlyList<DetectionDetailViewModel> Details,
+    string? Notes)
 {
-    public string DisplayName => $"{FormatName} ({Confidence:P0})";
+    public string DisplayName =>
+        string.IsNullOrWhiteSpace(ShortLabel)
+            ? $"{FormatName} ({Confidence:P0})"
+            : $"{FormatName} · {ShortLabel} ({Confidence:P0})";
+
     public string ConfidenceDisplay => $"{Confidence:P0}";
 }
 
 public class StagedSourceItemViewModel : ReactiveObject
 {
+    private static readonly TimeSpan MinStableRateWindow = TimeSpan.FromSeconds(1);
+
     private string _sourcePath;
     private bool _isDirectory;
     private string _phase = "Queued";
@@ -25,13 +36,13 @@ public class StagedSourceItemViewModel : ReactiveObject
     private long _recordsProcessed;
     private double _recordsPerSecond;
     private double? _etaSeconds;
-    private DateTimeOffset? _lastUpdateUtc;
-    private long _lastRecordsSnapshot;
+    private DateTimeOffset? _progressStartedUtc;
     private string _detectionStatus = "Pending";
     private bool _requiresDetectionReview;
     private bool _isDetectionUserConfirmed;
     private bool _isSniffing;
     private bool _updatingSelectionInternally;
+    private bool _isResumePending;
     private DetectionChoiceViewModel? _selectedDetectionChoice;
 
     public StagedSourceItemViewModel(string sourcePath, bool isDirectory)
@@ -41,7 +52,7 @@ public class StagedSourceItemViewModel : ReactiveObject
         DetectionChoices = [];
         if (isDirectory)
         {
-            _detectionStatus = "Directory (expanded on ingest)";
+            _detectionStatus = "Folder staged";
             _isDetectionUserConfirmed = true;
         }
     }
@@ -49,25 +60,46 @@ public class StagedSourceItemViewModel : ReactiveObject
     public string SourcePath
     {
         get => _sourcePath;
-        set => this.RaiseAndSetIfChanged(ref _sourcePath, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _sourcePath, value);
+            RaiseComputedStateProperties();
+        }
     }
 
     public bool IsDirectory
     {
         get => _isDirectory;
-        set => this.RaiseAndSetIfChanged(ref _isDirectory, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _isDirectory, value);
+            RaiseComputedStateProperties();
+        }
     }
+
+    public string SourceName =>
+        Path.GetFileName(SourcePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) is { Length: > 0 } name
+            ? name
+            : SourcePath;
 
     public string Phase
     {
         get => _phase;
-        set => this.RaiseAndSetIfChanged(ref _phase, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _phase, value);
+            RaiseComputedStateProperties();
+        }
     }
 
     public string? Message
     {
         get => _message;
-        set => this.RaiseAndSetIfChanged(ref _message, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _message, value);
+            RaiseComputedStateProperties();
+        }
     }
 
     public long BytesProcessed
@@ -85,13 +117,21 @@ public class StagedSourceItemViewModel : ReactiveObject
     public long RecordsProcessed
     {
         get => _recordsProcessed;
-        set => this.RaiseAndSetIfChanged(ref _recordsProcessed, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _recordsProcessed, value);
+            RaiseComputedStateProperties();
+        }
     }
 
     public double RecordsPerSecond
     {
         get => _recordsPerSecond;
-        set => this.RaiseAndSetIfChanged(ref _recordsPerSecond, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _recordsPerSecond, value);
+            RaiseComputedStateProperties();
+        }
     }
 
     public double? EtaSeconds
@@ -117,10 +157,15 @@ public class StagedSourceItemViewModel : ReactiveObject
         EtaSeconds.HasValue && EtaSeconds.Value > 0 ? TimeSpan.FromSeconds(EtaSeconds.Value).ToString(@"hh\:mm\:ss") : "-";
 
     public bool CanEdit => Phase is "Queued" or "Completed" or "Skipped" or "Failed";
+
     public bool IsSniffing
     {
         get => _isSniffing;
-        set => this.RaiseAndSetIfChanged(ref _isSniffing, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _isSniffing, value);
+            RaiseComputedStateProperties();
+        }
     }
 
     public ObservableCollection<DetectionChoiceViewModel> DetectionChoices { get; }
@@ -132,17 +177,23 @@ public class StagedSourceItemViewModel : ReactiveObject
         {
             var changed = !EqualityComparer<DetectionChoiceViewModel?>.Default.Equals(_selectedDetectionChoice, value);
             this.RaiseAndSetIfChanged(ref _selectedDetectionChoice, value);
-            if (changed)
+            if (!changed)
+                return;
+
+            if (!_updatingSelectionInternally)
             {
-                if (!_updatingSelectionInternally)
-                {
-                    _isDetectionUserConfirmed = value is not null;
-                    _requiresDetectionReview = false;
-                }
-                this.RaisePropertyChanged(nameof(HasDetectionChoice));
-                this.RaisePropertyChanged(nameof(DetectionBadge));
-                this.RaisePropertyChanged(nameof(RequiresDetectionReview));
+                _isResumePending = false;
+                _isDetectionUserConfirmed = value is not null;
+                _requiresDetectionReview = false;
             }
+
+            this.RaisePropertyChanged(nameof(HasDetectionChoice));
+            this.RaisePropertyChanged(nameof(RequiresDetectionReview));
+            this.RaisePropertyChanged(nameof(HasDetectionDetails));
+            this.RaisePropertyChanged(nameof(DetectionDetails));
+            this.RaisePropertyChanged(nameof(DetectionNotes));
+            this.RaisePropertyChanged(nameof(HasDetectionNotes));
+            RaiseComputedStateProperties();
         }
     }
 
@@ -151,30 +202,101 @@ public class StagedSourceItemViewModel : ReactiveObject
     public string DetectionStatus
     {
         get => _detectionStatus;
-        set => this.RaiseAndSetIfChanged(ref _detectionStatus, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _detectionStatus, value);
+            RaiseComputedStateProperties();
+        }
     }
 
     public bool RequiresDetectionReview
     {
         get => _requiresDetectionReview;
-        private set => this.RaiseAndSetIfChanged(ref _requiresDetectionReview, value);
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _requiresDetectionReview, value);
+            RaiseComputedStateProperties();
+        }
     }
 
     public bool CanSelectDetection => !IsDirectory && DetectionChoices.Count > 0 && !IsSniffing;
+
+    public IReadOnlyList<DetectionDetailViewModel> DetectionDetails =>
+        SelectedDetectionChoice?.Details ?? [];
+
+    public bool HasDetectionDetails => DetectionDetails.Count > 0;
+
+    public string DetectionNotes => SelectedDetectionChoice?.Notes ?? string.Empty;
+
+    public bool HasDetectionNotes => !string.IsNullOrWhiteSpace(DetectionNotes);
+
+    public string DetectionSummary =>
+        SelectedDetectionChoice?.Summary
+        ?? (IsSniffing
+            ? "Sniffing timestamp, timezone, encoding, and structure..."
+            : DetectionStatus);
+
+    public string ConfidenceDisplay
+    {
+        get
+        {
+            if (IsDirectory)
+                return "N/A";
+            if (IsSniffing)
+                return "...";
+            if (SelectedDetectionChoice is not null)
+                return SelectedDetectionChoice.ConfidenceDisplay;
+            return "-";
+        }
+    }
 
     public string DetectionBadge
     {
         get
         {
             if (IsDirectory)
-                return "Dir";
+                return "Folder";
             if (IsSniffing)
-                return "Sniffing";
-            if (SelectedDetectionChoice is null)
-                return "Unknown";
-            if (_requiresDetectionReview && !_isDetectionUserConfirmed)
+                return "Sniff";
+            if (DetectionStatus.StartsWith("Archive", StringComparison.OrdinalIgnoreCase)
+                || DetectionStatus.StartsWith("ZIP", StringComparison.OrdinalIgnoreCase))
+                return "Archive";
+            if (_isResumePending)
+                return "Resume";
+            if (RequiresDetectionReview && !_isDetectionUserConfirmed)
                 return "Review";
-            return SelectedDetectionChoice.Confidence >= 0.95 ? "High" : "Selected";
+            if (Phase == "Ingesting")
+                return "Ingest";
+            if (Phase == "Completed")
+                return "Done";
+            if (Phase == "Failed")
+                return "Failed";
+            if (Phase == "Skipped")
+                return "Skipped";
+            if (SelectedDetectionChoice is null)
+                return "Pending";
+            return SelectedDetectionChoice.Confidence >= 0.95 ? "High" : "Ready";
+        }
+    }
+
+    public string QueueSummary
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (_isResumePending)
+                parts.Add("Ready to resume interrupted ingest");
+
+            if (!string.IsNullOrWhiteSpace(DetectionSummary))
+                parts.Add(DetectionSummary);
+
+            if (Phase is not "Queued")
+                parts.Add(Phase);
+
+            if (RecordsProcessed > 0)
+                parts.Add($"{RecordsProcessed:N0} rows");
+
+            return string.Join(" · ", parts.Where(part => !string.IsNullOrWhiteSpace(part)));
         }
     }
 
@@ -194,10 +316,29 @@ public class StagedSourceItemViewModel : ReactiveObject
 
     public void MarkSniffing()
     {
+        _isResumePending = false;
         IsSniffing = true;
         DetectionStatus = "Sniffing format candidates...";
-        this.RaisePropertyChanged(nameof(DetectionBadge));
         this.RaisePropertyChanged(nameof(CanSelectDetection));
+    }
+
+    public void MarkPendingResume(string sessionTimezoneDescription)
+    {
+        DetectionChoices.Clear();
+        _updatingSelectionInternally = true;
+        SelectedDetectionChoice = null;
+        _updatingSelectionInternally = false;
+        _requiresDetectionReview = false;
+        _isDetectionUserConfirmed = true;
+        _isResumePending = true;
+        IsSniffing = false;
+        DetectionStatus = $"Interrupted ingest detected — resume will use {sessionTimezoneDescription}.";
+        this.RaisePropertyChanged(nameof(CanSelectDetection));
+        this.RaisePropertyChanged(nameof(HasDetectionDetails));
+        this.RaisePropertyChanged(nameof(DetectionDetails));
+        this.RaisePropertyChanged(nameof(DetectionNotes));
+        this.RaisePropertyChanged(nameof(HasDetectionNotes));
+        RaiseComputedStateProperties();
     }
 
     public void ApplyDetectionChoices(IReadOnlyList<DetectionChoiceViewModel> choices, bool needsReview, string? statusMessage = null)
@@ -210,6 +351,7 @@ public class StagedSourceItemViewModel : ReactiveObject
         SelectedDetectionChoice = DetectionChoices.FirstOrDefault();
         _updatingSelectionInternally = false;
 
+        _isResumePending = false;
         _requiresDetectionReview = needsReview;
         _isDetectionUserConfirmed = !needsReview && SelectedDetectionChoice is not null;
         IsSniffing = false;
@@ -218,13 +360,17 @@ public class StagedSourceItemViewModel : ReactiveObject
             (SelectedDetectionChoice is null
                 ? "No viable format detected"
                 : needsReview
-                    ? "Detection confidence is low — please review."
-                    : $"Detected {SelectedDetectionChoice.FormatName} ({SelectedDetectionChoice.ConfidenceDisplay})");
+                    ? $"Low confidence guess ({SelectedDetectionChoice.ConfidenceDisplay}) — confirm or override before ingest."
+                    : $"Detected {SelectedDetectionChoice.FormatName} ({SelectedDetectionChoice.ConfidenceDisplay}).");
 
         this.RaisePropertyChanged(nameof(HasDetectionChoice));
         this.RaisePropertyChanged(nameof(RequiresDetectionReview));
         this.RaisePropertyChanged(nameof(CanSelectDetection));
-        this.RaisePropertyChanged(nameof(DetectionBadge));
+        this.RaisePropertyChanged(nameof(HasDetectionDetails));
+        this.RaisePropertyChanged(nameof(DetectionDetails));
+        this.RaisePropertyChanged(nameof(DetectionNotes));
+        this.RaisePropertyChanged(nameof(HasDetectionNotes));
+        RaiseComputedStateProperties();
     }
 
     public void MarkDetectionFailed(string reason)
@@ -235,12 +381,17 @@ public class StagedSourceItemViewModel : ReactiveObject
         _updatingSelectionInternally = false;
         _requiresDetectionReview = false;
         _isDetectionUserConfirmed = false;
+        _isResumePending = false;
         IsSniffing = false;
         DetectionStatus = string.IsNullOrWhiteSpace(reason) ? "Detection failed" : $"Detection failed: {reason}";
         this.RaisePropertyChanged(nameof(HasDetectionChoice));
         this.RaisePropertyChanged(nameof(RequiresDetectionReview));
         this.RaisePropertyChanged(nameof(CanSelectDetection));
-        this.RaisePropertyChanged(nameof(DetectionBadge));
+        this.RaisePropertyChanged(nameof(HasDetectionDetails));
+        this.RaisePropertyChanged(nameof(DetectionDetails));
+        this.RaisePropertyChanged(nameof(DetectionNotes));
+        this.RaisePropertyChanged(nameof(HasDetectionNotes));
+        RaiseComputedStateProperties();
     }
 
     public void ConfirmDetectionSelection()
@@ -250,9 +401,9 @@ public class StagedSourceItemViewModel : ReactiveObject
 
         _isDetectionUserConfirmed = true;
         _requiresDetectionReview = false;
-        DetectionStatus = $"Selected {SelectedDetectionChoice.FormatName} ({SelectedDetectionChoice.ConfidenceDisplay}).";
+        DetectionStatus = $"Using {SelectedDetectionChoice.FormatName} ({SelectedDetectionChoice.ConfidenceDisplay}).";
         this.RaisePropertyChanged(nameof(RequiresDetectionReview));
-        this.RaisePropertyChanged(nameof(DetectionBadge));
+        RaiseComputedStateProperties();
     }
 
     public void ApplyProgress(
@@ -263,19 +414,10 @@ public class StagedSourceItemViewModel : ReactiveObject
         string? message)
     {
         var now = DateTimeOffset.UtcNow;
-        if (_lastUpdateUtc.HasValue)
-        {
-            var elapsed = (now - _lastUpdateUtc.Value).TotalSeconds;
-            if (elapsed > 0)
-            {
-                var deltaRecords = recordsProcessed - _lastRecordsSnapshot;
-                if (deltaRecords >= 0)
-                    RecordsPerSecond = deltaRecords / elapsed;
-            }
-        }
-
-        _lastUpdateUtc = now;
-        _lastRecordsSnapshot = recordsProcessed;
+        var isIngesting = string.Equals(phase, nameof(IngestFilePhase.Ingesting), StringComparison.Ordinal);
+        var isReset = string.Equals(phase, nameof(IngestFilePhase.Queued), StringComparison.Ordinal)
+            && bytesProcessed == 0
+            && recordsProcessed == 0;
 
         Phase = phase;
         Message = message;
@@ -283,16 +425,39 @@ public class StagedSourceItemViewModel : ReactiveObject
         BytesTotal = bytesTotal;
         RecordsProcessed = recordsProcessed;
 
-        if (RecordsPerSecond > 0 && bytesTotal > 0 && bytesProcessed < bytesTotal && recordsProcessed > 0)
+        if (isReset)
         {
-            var processedRatio = Math.Clamp((double)bytesProcessed / bytesTotal, 0.0, 1.0);
-            var estimatedTotalRecords = recordsProcessed / Math.Max(processedRatio, 0.01);
-            var remainingRecords = Math.Max(estimatedTotalRecords - recordsProcessed, 0);
-            EtaSeconds = remainingRecords / RecordsPerSecond;
+            _progressStartedUtc = null;
+            RecordsPerSecond = 0;
+            EtaSeconds = null;
         }
         else
         {
-            EtaSeconds = null;
+            if (!_progressStartedUtc.HasValue && (bytesProcessed > 0 || recordsProcessed > 0))
+                _progressStartedUtc = now;
+
+            if (_progressStartedUtc.HasValue)
+            {
+                var elapsed = (now - _progressStartedUtc.Value).TotalSeconds;
+                if (elapsed >= MinStableRateWindow.TotalSeconds && recordsProcessed > 0)
+                    RecordsPerSecond = recordsProcessed / elapsed;
+                else
+                    RecordsPerSecond = 0;
+
+                var bytesPerSecond = elapsed >= MinStableRateWindow.TotalSeconds && bytesProcessed > 0
+                    ? bytesProcessed / elapsed
+                    : 0;
+
+                if (isIngesting && bytesTotal > 0 && bytesProcessed > 0 && bytesProcessed < bytesTotal && bytesPerSecond > 0)
+                    EtaSeconds = Math.Max((bytesTotal - bytesProcessed) / bytesPerSecond, 1);
+                else
+                    EtaSeconds = null;
+            }
+            else
+            {
+                RecordsPerSecond = 0;
+                EtaSeconds = null;
+            }
         }
 
         this.RaisePropertyChanged(nameof(ProgressRatio));
@@ -301,6 +466,16 @@ public class StagedSourceItemViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(EtaDisplay));
         this.RaisePropertyChanged(nameof(CanEdit));
         this.RaisePropertyChanged(nameof(CanReingest));
+        RaiseComputedStateProperties();
+    }
+
+    private void RaiseComputedStateProperties()
+    {
+        this.RaisePropertyChanged(nameof(SourceName));
+        this.RaisePropertyChanged(nameof(DetectionBadge));
+        this.RaisePropertyChanged(nameof(DetectionSummary));
+        this.RaisePropertyChanged(nameof(ConfidenceDisplay));
+        this.RaisePropertyChanged(nameof(QueueSummary));
     }
 
     private static string FormatBytes(long bytes)

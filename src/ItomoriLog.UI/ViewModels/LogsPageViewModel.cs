@@ -1,5 +1,8 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
+using System.Reactive.Concurrency;
 using System.Reactive;
+using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using ReactiveUI;
 using ItomoriLog.Core.Model;
@@ -13,6 +16,7 @@ public class LogsPageViewModel : ViewModelBase
     private readonly DuckLakeConnectionFactory _factory;
     private readonly RowPager _pager;
     private readonly QueryPlanner _planner;
+    private readonly TimelineQuery _timelineQuery;
     private readonly SearchQueryParser _searchParser = new();
 
     private string _queryText = "";
@@ -30,12 +34,12 @@ public class LogsPageViewModel : ViewModelBase
     private bool _isLoading;
     private string _statusText = "Ready";
     private int _currentPageIndex;
+    private bool _suppressAutoRefresh;
 
     private PageCursor? _nextCursor;
-    private PageCursor? _prevCursor;
-    private readonly Stack<PageCursor> _backwardCursors = new();
 
-    private readonly string _defaultTimezone;
+    private string _defaultTimezone;
+    private (DateTimeOffset Min, DateTimeOffset Max)? _cachedSessionTimeRange;
 
     public LogsPageViewModel(DuckLakeConnectionFactory factory, string defaultTimezone)
     {
@@ -43,29 +47,36 @@ public class LogsPageViewModel : ViewModelBase
         _defaultTimezone = defaultTimezone;
         _planner = new QueryPlanner();
         _pager = new RowPager(factory, _planner);
+        _timelineQuery = new TimelineQuery(factory);
 
         NextPageCommand = ReactiveCommand.CreateFromTask(
-            NextPageAsync,
-            this.WhenAnyValue(x => x.HasNextPage));
-        PreviousPageCommand = ReactiveCommand.CreateFromTask(
-            PreviousPageAsync,
-            this.WhenAnyValue(x => x.HasPreviousPage));
+            LoadMoreAsync,
+            this.WhenAnyValue(x => x.HasNextPage, x => x.IsLoading, (hasNext, isLoading) => hasNext && !isLoading));
+        LoadToEndCommand = ReactiveCommand.CreateFromTask(
+            LoadToEndAsync,
+            this.WhenAnyValue(x => x.HasNextPage, x => x.IsLoading, (hasNext, isLoading) => hasNext && !isLoading));
+        PreviousPageCommand = ReactiveCommand.Create(
+            () => { },
+            Observable.Return(false));
+        LoadMoreCommand = NextPageCommand;
         ToggleDetailCommand = ReactiveCommand.Create(() => { IsDetailOpen = !IsDetailOpen; });
         RefreshCommand = ReactiveCommand.CreateFromTask(RefreshAsync);
 
-        // Debounced query execution on filter changes
         this.WhenAnyValue(
                 x => x.TextSearch,
                 x => x.StartUtc,
                 x => x.EndUtc,
-                x => x.QueryText)
+                x => x.QueryText,
+                x => x.SelectedSources,
+                x => x.ExcludedSources,
+                x => x.SelectedLevels,
+                x => x.ExcludedLevels,
+                (_, _, _, _, _, _, _, _) => Unit.Default)
+            .Where(_ => !_suppressAutoRefresh)
             .Throttle(TimeSpan.FromMilliseconds(300))
             .ObserveOn(RxApp.MainThreadScheduler)
-            .Select(_ => Unit.Default)
             .InvokeCommand(RefreshCommand);
     }
-
-    // --- Properties ---
 
     public string QueryText
     {
@@ -171,14 +182,75 @@ public class LogsPageViewModel : ViewModelBase
         private set => this.RaiseAndSetIfChanged(ref _hasPreviousPage, value);
     }
 
-    // --- Commands ---
-
     public ReactiveCommand<Unit, Unit> NextPageCommand { get; }
     public ReactiveCommand<Unit, Unit> PreviousPageCommand { get; }
+    public ReactiveCommand<Unit, Unit> LoadMoreCommand { get; }
+    public ReactiveCommand<Unit, Unit> LoadToEndCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleDetailCommand { get; }
     public ReactiveCommand<Unit, Unit> RefreshCommand { get; }
 
-    // --- Methods ---
+    public FilterState BuildCurrentFilterState() => BuildFilter();
+
+    public void InvalidateCache()
+    {
+        _pager.ClearCache();
+        _cachedSessionTimeRange = null;
+    }
+
+    public void SetDisplayTimezone(string defaultTimezone)
+    {
+        _defaultTimezone = defaultTimezone;
+        if (CurrentPage.Count > 0)
+        {
+            var projected = new ObservableCollection<LogRowDto>(CurrentPage.Select(ProjectToDtoFromCurrent));
+            if (RxApp.MainThreadScheduler == CurrentThreadScheduler.Instance)
+            {
+                CurrentPage = projected;
+                return;
+            }
+
+            RxApp.MainThreadScheduler.Schedule(Unit.Default, (_, _) =>
+            {
+                CurrentPage = projected;
+                return Disposable.Empty;
+            });
+        }
+    }
+
+    public async Task RefreshResultsAsync(bool invalidateCache = false)
+    {
+        if (invalidateCache)
+            InvalidateCache();
+
+        await RefreshAsync();
+    }
+
+    public async Task ResetFiltersAndRefreshAsync(bool invalidateCache = false)
+    {
+        _suppressAutoRefresh = true;
+        try
+        {
+            await RunOnMainThreadAsync(() =>
+            {
+                QueryText = "";
+                TextSearch = null;
+                StartUtc = null;
+                EndUtc = null;
+                SelectedSources = [];
+                ExcludedSources = [];
+                SelectedLevels = [];
+                ExcludedLevels = [];
+                QueryParseError = null;
+                SelectedRow = null;
+            });
+        }
+        finally
+        {
+            _suppressAutoRefresh = false;
+        }
+
+        await RefreshResultsAsync(invalidateCache);
+    }
 
     private FilterState BuildFilter()
     {
@@ -213,39 +285,29 @@ public class LogsPageViewModel : ViewModelBase
         };
     }
 
-    public FilterState BuildCurrentFilterState() => BuildFilter();
-
     private async Task RefreshAsync()
     {
-        _backwardCursors.Clear();
         _nextCursor = null;
-        _prevCursor = null;
-        CurrentPageIndex = 0;
-        await ExecuteQueryAsync(null, PageDirection.Forward);
+        await RunOnMainThreadAsync(() => CurrentPageIndex = 0);
+        await ExecuteQueryAsync(null, PageDirection.Forward, append: false);
     }
 
-    private async Task NextPageAsync()
+    private async Task LoadMoreAsync()
     {
-        if (_nextCursor is null) return;
-        if (_prevCursor is not null)
-            _backwardCursors.Push(_prevCursor);
-        await ExecuteQueryAsync(_nextCursor, PageDirection.Forward);
+        if (_nextCursor is null)
+            return;
+
+        await ExecuteQueryAsync(_nextCursor, PageDirection.Forward, append: true);
         CurrentPageIndex++;
     }
 
-    private async Task PreviousPageAsync()
+    private async Task LoadToEndAsync()
     {
-        if (!_backwardCursors.TryPop(out var cursor))
-        {
-            // Go back to first page
-            await RefreshAsync();
-            return;
-        }
-        await ExecuteQueryAsync(cursor, PageDirection.Forward);
-        CurrentPageIndex--;
+        while (HasNextPage)
+            await LoadMoreAsync();
     }
 
-    private async Task ExecuteQueryAsync(PageCursor? cursor, PageDirection direction)
+    private async Task ExecuteQueryAsync(PageCursor? cursor, PageDirection direction, bool append)
     {
         IsLoading = true;
         try
@@ -253,41 +315,89 @@ public class LogsPageViewModel : ViewModelBase
             var filter = BuildFilter();
             if (QueryParseError is not null)
             {
-                StatusText = $"Query parse error: {QueryParseError}";
-                CurrentPage = [];
-                _prevCursor = null;
-                _nextCursor = null;
-                HasNextPage = false;
-                HasPreviousPage = CurrentPageIndex > 0 || _backwardCursors.Count > 0;
+                await RunOnMainThreadAsync(() =>
+                {
+                    StatusText = $"Query parse error: {QueryParseError}";
+                    CurrentPage = [];
+                    _nextCursor = null;
+                    HasNextPage = false;
+                    HasPreviousPage = false;
+                });
                 return;
             }
 
-            var result = await _pager.FetchPageAsync(filter, cursor, direction);
+            var tickContext = !string.IsNullOrWhiteSpace(filter.TickExpression)
+                ? await GetTickContextAsync()
+                : null;
+
+            var result = await _pager.FetchPageAsync(filter, cursor, direction, tickContext);
 
             var dtos = result.Rows.Select(ProjectToDto).ToList();
-            CurrentPage = new ObservableCollection<LogRowDto>(dtos);
+            await RunOnMainThreadAsync(() =>
+            {
+                if (append && CurrentPage.Count > 0)
+                {
+                    foreach (var dto in dtos)
+                        CurrentPage.Add(dto);
+                }
+                else
+                {
+                    CurrentPage = new ObservableCollection<LogRowDto>(dtos);
+                    SelectedRow = null;
+                }
 
-            _prevCursor = result.Cursors.First;
-            _nextCursor = result.Cursors.Last;
-            HasNextPage = result.Rows.Count == _pager.PageSize;
-            HasPreviousPage = CurrentPageIndex > 0 || _backwardCursors.Count > 0;
+                _nextCursor = result.Cursors.Last;
+                HasNextPage = result.Rows.Count == _pager.PageSize && result.Cursors.Last is not null;
+                HasPreviousPage = false;
+                StatusText = CurrentPage.Count > 0
+                    ? $"Loaded {CurrentPage.Count.ToString("N0", CultureInfo.InvariantCulture)} rows"
+                    : "No results";
+            });
 
-            StatusText = result.Rows.Count > 0
-                ? $"Page {CurrentPageIndex + 1} — {result.Rows.Count} rows"
-                : "No results";
-
-            // Prefetch next page
             if (_nextCursor is not null && HasNextPage)
-                _pager.PrefetchNext(filter, _nextCursor);
+                _pager.PrefetchNext(filter, _nextCursor, tickContext);
+        }
+        catch (InvalidOperationException ex)
+        {
+            await RunOnMainThreadAsync(() =>
+            {
+                QueryParseError = ex.Message;
+                StatusText = $"Query parse error: {ex.Message}";
+                CurrentPage = [];
+                _nextCursor = null;
+                HasNextPage = false;
+                HasPreviousPage = false;
+            });
         }
         catch (Exception ex)
         {
-            StatusText = $"Query error: {ex.Message}";
+            await RunOnMainThreadAsync(() => StatusText = $"Query error: {ex.Message}");
         }
         finally
         {
-            IsLoading = false;
+            await RunOnMainThreadAsync(() => IsLoading = false);
         }
+    }
+
+    private static Task RunOnMainThreadAsync(Action action)
+    {
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        RxApp.MainThreadScheduler.Schedule(Unit.Default, (_, _) =>
+        {
+            try
+            {
+                action();
+                tcs.SetResult();
+            }
+            catch (Exception ex)
+            {
+                tcs.SetException(ex);
+            }
+
+            return Disposable.Empty;
+        });
+
+        return tcs.Task;
     }
 
     private LogRowDto ProjectToDto(LogRow row)
@@ -311,13 +421,32 @@ public class LogsPageViewModel : ViewModelBase
             OffsetMinutes: row.TimestampEffectiveOffsetMinutes);
     }
 
+    private LogRowDto ProjectToDtoFromCurrent(LogRowDto row)
+    {
+        var displayTz = GetDisplayTimeZone();
+        var localTs = TimeZoneInfo.ConvertTime(row.TimestampUtc, displayTz);
+        return row with { Timestamp = localTs.ToString("yyyy-MM-dd HH:mm:ss.fff zzz") };
+    }
+
     private TimeZoneInfo GetDisplayTimeZone()
     {
         if (!string.IsNullOrEmpty(_defaultTimezone))
         {
             try { return TimeZoneInfo.FindSystemTimeZoneById(_defaultTimezone); }
-            catch { /* fall through */ }
+            catch { }
         }
+
         return TimeZoneInfo.Local;
+    }
+
+    private async Task<TickContext> GetTickContextAsync()
+    {
+        if (!_cachedSessionTimeRange.HasValue)
+            _cachedSessionTimeRange = await _timelineQuery.GetTimeRangeAsync();
+
+        var now = DateTimeOffset.UtcNow;
+        return _cachedSessionTimeRange.HasValue
+            ? new TickContext(now, _cachedSessionTimeRange.Value.Min, _cachedSessionTimeRange.Value.Max)
+            : new TickContext(now);
     }
 }

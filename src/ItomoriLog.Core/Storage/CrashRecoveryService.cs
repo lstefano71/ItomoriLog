@@ -9,7 +9,11 @@ public sealed record LockInfo(int Pid, DateTime TimestampUtc);
 public sealed record CrashRecoveryStatus(
     bool CrashDetected,
     int IncompleteSegmentCount,
-    IReadOnlyList<string> IncompleteRunIds);
+    IReadOnlyList<string> IncompleteRunIds,
+    IReadOnlyList<string> ResumableSourcePaths)
+{
+    public bool CanResume => ResumableSourcePaths.Count > 0;
+}
 
 public sealed class CrashRecoveryService
 {
@@ -74,8 +78,6 @@ public sealed class CrashRecoveryService
 
     public async Task<CrashRecoveryStatus> CheckAsync(DuckDBConnection connection, CancellationToken ct = default)
     {
-        var staleLock = IsLockStale();
-
         using var cmd = connection.CreateCommand();
         cmd.CommandText = "SELECT run_id FROM ingest_runs WHERE status = 'running'";
         using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -84,6 +86,7 @@ public sealed class CrashRecoveryService
         while (await reader.ReadAsync(ct))
             incompleteRuns.Add(reader.GetString(0));
 
+        var resumableSourcePaths = await ReadResumableSourcePathsAsync(connection, ct);
         var segmentCount = 0;
         if (incompleteRuns.Count > 0)
         {
@@ -95,9 +98,10 @@ public sealed class CrashRecoveryService
         }
 
         return new CrashRecoveryStatus(
-            CrashDetected: staleLock || incompleteRuns.Count > 0,
+            CrashDetected: resumableSourcePaths.Count > 0,
             IncompleteSegmentCount: segmentCount,
-            IncompleteRunIds: incompleteRuns);
+            IncompleteRunIds: incompleteRuns,
+            ResumableSourcePaths: resumableSourcePaths);
     }
 
     public async Task MarkRunsAbandonedAsync(DuckDBConnection connection, CancellationToken ct = default)
@@ -114,6 +118,18 @@ public sealed class CrashRecoveryService
         ReleaseLock();
     }
 
+    public async Task<IReadOnlyList<string>> RecoverInterruptedIngestionAsync(
+        DuckDBConnection connection,
+        CancellationToken ct = default)
+    {
+        var status = await CheckAsync(connection, ct);
+        if (!status.CanResume)
+            return [];
+
+        await MarkRunsAbandonedAsync(connection, ct);
+        return status.ResumableSourcePaths;
+    }
+
     internal static bool IsProcessRunning(int pid)
     {
         try
@@ -126,5 +142,28 @@ public sealed class CrashRecoveryService
             // Process does not exist
             return false;
         }
+    }
+
+    private static async Task<IReadOnlyList<string>> ReadResumableSourcePathsAsync(
+        DuckDBConnection connection,
+        CancellationToken ct)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT source_path
+            FROM ingest_run_sources
+            WHERE run_id IN (
+                SELECT run_id
+                FROM ingest_runs
+                WHERE status = 'running'
+            )
+            ORDER BY source_order, source_path
+            """;
+
+        var results = new List<string>();
+        using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            results.Add(reader.GetString(0));
+        return results;
     }
 }

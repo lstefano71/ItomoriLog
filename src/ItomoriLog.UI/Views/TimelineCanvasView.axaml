@@ -1,21 +1,73 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:ItomoriLog.UI.ViewModels"
+             xmlns:views="using:ItomoriLog.UI.Views"
              x:Class="ItomoriLog.UI.Views.TimelineCanvasView"
              x:DataType="vm:TimelineViewModel"
-             Height="120"
+             Height="148"
              ClipToBounds="True">
 
   <Border Background="{StaticResource Itomori.Panel}" CornerRadius="4" Padding="0">
-    <Grid RowDefinitions="*,Auto">
-      <!-- The canvas is rendered in code-behind using DrawingContext -->
-      <Canvas Name="TimelineCanvas"
-              Grid.Row="0"
-              Background="Transparent" />
+    <Grid RowDefinitions="*,Auto,Auto" ColumnDefinitions="Auto,*">
+      <Grid Grid.Row="0" Grid.Column="0" RowDefinitions="Auto,*,Auto" Margin="8,6,6,4">
+        <TextBlock Text="{Binding YAxisTopLabel}"
+                   FontSize="10"
+                   Foreground="{StaticResource Itomori.SubtleForeground}"
+                   VerticalAlignment="Top" />
+        <TextBlock Grid.Row="1"
+                   Text="{Binding YAxisMidLabel}"
+                   FontSize="10"
+                   Foreground="{StaticResource Itomori.SubtleForeground}"
+                   VerticalAlignment="Center" />
+        <TextBlock Grid.Row="2"
+                   Text="0"
+                   FontSize="10"
+                   Foreground="{StaticResource Itomori.SubtleForeground}"
+                   VerticalAlignment="Bottom" />
+      </Grid>
+
+      <views:TimelineRenderSurface Name="TimelineCanvas"
+                                   Grid.Row="0"
+                                   Grid.Column="1"
+                                   Margin="0,6,8,4" />
+
+      <Grid Grid.Row="1" Grid.Column="1" ColumnDefinitions="Auto,*,Auto" Margin="0,0,8,2">
+        <TextBlock Text="{Binding VisibleStartLabel}"
+                   FontSize="10"
+                   Foreground="{StaticResource Itomori.SubtleForeground}" />
+        <TextBlock Grid.Column="1"
+                   Text="{Binding VisibleMidLabel}"
+                   FontSize="10"
+                   Foreground="{StaticResource Itomori.SubtleForeground}"
+                   HorizontalAlignment="Center" />
+        <TextBlock Grid.Column="2"
+                   Text="{Binding VisibleEndLabel}"
+                   FontSize="10"
+                   Foreground="{StaticResource Itomori.SubtleForeground}"
+                   HorizontalAlignment="Right" />
+      </Grid>
 
       <!-- Status bar -->
-      <Border Grid.Row="1" Padding="8,2" Background="#1A1F28">
-        <StackPanel Orientation="Horizontal" Spacing="12">
+      <Border Grid.Row="2" Grid.ColumnSpan="2" Padding="8,2" Background="#1A1F28">
+        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Button Content="-" Command="{Binding ZoomOutCommand}" MinWidth="24" Padding="6,0" />
+            <Button Content="+" Command="{Binding ZoomInCommand}" MinWidth="24" Padding="6,0" />
+            <Button Content="Reset view" Command="{Binding ResetViewCommand}" Padding="8,0" />
+            <Button Content="Clear selection"
+                    Command="{Binding ClearSelectionCommand}"
+                    Padding="8,0"
+                    IsVisible="{Binding HasSelection}" />
+          </StackPanel>
+
+          <TextBlock Grid.Column="1"
+                     FontSize="10"
+                     Foreground="{StaticResource Itomori.SubtleForeground}"
+                     VerticalAlignment="Center"
+                     HorizontalAlignment="Center"
+                     Text="Click bar to select · left-drag select · drag selection to slide · empty click clears" />
+
+          <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right">
           <TextBlock FontSize="10" Foreground="{StaticResource Itomori.SubtleForeground}">
             <TextBlock.Text>
               <MultiBinding StringFormat="Bin: {0}">
@@ -23,16 +75,13 @@
               </MultiBinding>
             </TextBlock.Text>
           </TextBlock>
-          <TextBlock FontSize="10" Foreground="{StaticResource Itomori.SubtleForeground}"
-                     IsVisible="{Binding SelectedStart, Converter={x:Static ObjectConverters.IsNotNull}}">
-            <TextBlock.Text>
-              <MultiBinding StringFormat="Selection: {0:HH:mm:ss} — {1:HH:mm:ss}">
-                <Binding Path="SelectedStart" />
-                <Binding Path="SelectedEnd" />
-              </MultiBinding>
-            </TextBlock.Text>
-          </TextBlock>
-        </StackPanel>
+            <TextBlock FontSize="10"
+                       Foreground="{StaticResource Brush.SakuraPink}"
+                       VerticalAlignment="Center"
+                       Text="{Binding SelectionDisplay}"
+                       IsVisible="{Binding HasSelection}" />
+          </StackPanel>
+        </Grid>
       </Border>
     </Grid>
   </Border>

@@ -2,6 +2,7 @@ namespace ItomoriLog.Core.Ingest;
 
 public sealed class DetectionEngine
 {
+    private const int MaxSampleBytes = 256 * 1024;
     private readonly IReadOnlyList<IFormatDetector> _detectors;
 
     public DetectionEngine() : this([
@@ -35,11 +36,14 @@ public sealed class DetectionEngine
     private List<(DetectionResult result, int priority)> DetectCandidatesInternal(Stream sniffBuffer, string sourceName)
     {
         var results = new List<(DetectionResult result, int priority)>();
+        var sampleBytes = ReadSampleBytes(sniffBuffer);
+        if (sampleBytes.Length == 0)
+            return results;
 
         for (int i = 0; i < _detectors.Count; i++)
         {
-            sniffBuffer.Position = 0;
-            var result = _detectors[i].Probe(sniffBuffer, sourceName);
+            using var detectorStream = new MemoryStream(sampleBytes, writable: false);
+            var result = _detectors[i].Probe(detectorStream, sourceName);
             if (result is not null)
                 results.Add((result, i));
         }
@@ -52,6 +56,28 @@ public sealed class DetectionEngine
         });
 
         return results;
+    }
+
+    private static byte[] ReadSampleBytes(Stream sniffBuffer)
+    {
+        sniffBuffer.Position = 0;
+
+        var buffer = new byte[sniffBuffer.CanSeek
+            ? (int)Math.Min(sniffBuffer.Length, MaxSampleBytes)
+            : MaxSampleBytes];
+
+        var totalRead = 0;
+        while (totalRead < buffer.Length)
+        {
+            var read = sniffBuffer.Read(buffer, totalRead, buffer.Length - totalRead);
+            if (read == 0)
+                break;
+
+            totalRead += read;
+        }
+
+        sniffBuffer.Position = 0;
+        return totalRead == buffer.Length ? buffer : buffer[..totalRead];
     }
 }
 

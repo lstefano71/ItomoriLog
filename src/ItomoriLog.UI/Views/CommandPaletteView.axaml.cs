@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Threading;
 using ItomoriLog.UI.ViewModels;
 
 namespace ItomoriLog.UI.Views;
@@ -16,16 +17,13 @@ public partial class CommandPaletteView : UserControl
         base.OnPropertyChanged(change);
 
         if (change.Property.Name == nameof(IsVisible) && IsVisible)
-        {
-            // Focus the search box when palette opens
-            SearchBox?.Focus();
-        }
+            Dispatcher.UIThread.Post(FocusSearchBox, DispatcherPriority.Input);
     }
 
     private void OnOverlayPressed(object? sender, PointerPressedEventArgs e)
     {
         if (DataContext is CommandPaletteViewModel vm)
-            vm.IsOpen = false;
+            vm.Close();
     }
 
     private void OnSearchBoxKeyDown(object? sender, KeyEventArgs e)
@@ -35,7 +33,7 @@ public partial class CommandPaletteView : UserControl
         switch (e.Key)
         {
             case Key.Escape:
-                vm.IsOpen = false;
+                vm.Close();
                 e.Handled = true;
                 break;
             case Key.Enter:
@@ -43,26 +41,44 @@ public partial class CommandPaletteView : UserControl
                 e.Handled = true;
                 break;
             case Key.Down:
-                MoveSelection(1);
+                MoveSelection(vm, 1);
                 e.Handled = true;
                 break;
             case Key.Up:
-                MoveSelection(-1);
+                MoveSelection(vm, -1);
+                e.Handled = true;
+                break;
+            case Key.PageDown:
+                MoveSelection(vm, GetPageStep());
+                e.Handled = true;
+                break;
+            case Key.PageUp:
+                MoveSelection(vm, -GetPageStep());
                 e.Handled = true;
                 break;
         }
     }
 
-    private void MoveSelection(int delta)
+    private void MoveSelection(CommandPaletteViewModel vm, int delta)
     {
-        if (DataContext is not CommandPaletteViewModel vm) return;
-        if (vm.FilteredCommands.Count == 0) return;
+        vm.MoveSelectionBy(delta);
+        FocusSearchBox();
+    }
 
-        var currentIndex = vm.SelectedCommand is not null
-            ? vm.FilteredCommands.IndexOf(vm.SelectedCommand)
-            : -1;
+    private void FocusSearchBox()
+    {
+        if (SearchBox is null)
+            return;
 
-        var newIndex = Math.Clamp(currentIndex + delta, 0, vm.FilteredCommands.Count - 1);
-        vm.SelectedCommand = vm.FilteredCommands[newIndex];
+        SearchBox.Focus();
+        SearchBox.CaretIndex = SearchBox.Text?.Length ?? 0;
+    }
+
+    private int GetPageStep()
+    {
+        if (CommandList is null || CommandList.Bounds.Height <= 0)
+            return 7;
+
+        return Math.Max(1, (int)(CommandList.Bounds.Height / 44));
     }
 }

@@ -7,28 +7,34 @@ namespace ItomoriLog.UI.ViewModels;
 public class CrashRecoveryViewModel : ViewModelBase
 {
     private bool _isVisible;
+    private bool _isBusy;
     private string _message = "";
-    private readonly Action? _onResume;
+    private readonly Func<Task>? _onResume;
     private readonly Action? _onDismiss;
 
     public CrashRecoveryViewModel()
     {
-        ResumeCommand = ReactiveCommand.Create(OnResume);
+        ResumeCommand = ReactiveCommand.CreateFromTask(
+            OnResumeAsync,
+            this.WhenAnyValue(x => x.IsVisible, x => x.IsBusy, (visible, busy) => visible && !busy));
         DismissCommand = ReactiveCommand.Create(OnDismiss);
     }
 
-    public CrashRecoveryViewModel(CrashRecoveryStatus status, Action? onResume = null, Action? onDismiss = null)
+    public CrashRecoveryViewModel(
+        CrashRecoveryStatus status,
+        Func<Task>? onResume = null,
+        Action? onDismiss = null)
         : this()
     {
         _onResume = onResume;
         _onDismiss = onDismiss;
 
-        if (status.CrashDetected)
+        if (status.CanResume)
         {
             IsVisible = true;
-            Message = status.IncompleteSegmentCount > 0
-                ? $"Previous ingest was interrupted. {status.IncompleteSegmentCount} segment(s) incomplete."
-                : "Previous session did not shut down cleanly.";
+            Message = status.ResumableSourcePaths.Count == 1
+                ? "An interrupted ingest can be resumed for 1 staged source."
+                : $"An interrupted ingest can be resumed for {status.ResumableSourcePaths.Count} staged sources.";
         }
     }
 
@@ -36,6 +42,12 @@ public class CrashRecoveryViewModel : ViewModelBase
     {
         get => _isVisible;
         set => this.RaiseAndSetIfChanged(ref _isVisible, value);
+    }
+
+    public bool IsBusy
+    {
+        get => _isBusy;
+        set => this.RaiseAndSetIfChanged(ref _isBusy, value);
     }
 
     public string Message
@@ -47,10 +59,20 @@ public class CrashRecoveryViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> ResumeCommand { get; }
     public ReactiveCommand<Unit, Unit> DismissCommand { get; }
 
-    private void OnResume()
+    private async Task OnResumeAsync()
     {
-        _onResume?.Invoke();
-        IsVisible = false;
+        IsBusy = true;
+        try
+        {
+            if (_onResume is not null)
+                await _onResume();
+
+            IsVisible = false;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     private void OnDismiss()

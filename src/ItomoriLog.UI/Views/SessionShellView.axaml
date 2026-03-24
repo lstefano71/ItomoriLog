@@ -6,11 +6,11 @@
              x:DataType="vm:SessionShellViewModel">
 
   <DockPanel>
-    <views:CrashRecoveryBannerView DockPanel.Dock="Top"
-                                   DataContext="{Binding CrashRecovery}"
-                                   IsVisible="{Binding CrashRecovery.IsVisible}" />
+    <Grid DockPanel.Dock="Top"
+          IsVisible="{Binding CrashRecovery, Converter={x:Static ObjectConverters.IsNotNull}}">
+      <views:CrashRecoveryBannerView DataContext="{Binding CrashRecovery}" />
+    </Grid>
 
-    <!-- Session Header -->
     <Border DockPanel.Dock="Top" Background="{StaticResource Itomori.Panel}" Padding="16,10">
       <Grid ColumnDefinitions="*,Auto">
         <Grid IsVisible="{Binding !IsEditingHeader}">
@@ -38,6 +38,9 @@
         </Grid>
 
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <Button Content="{Binding StagingPaneToggleText}"
+                  Command="{Binding ToggleStagingPaneCommand}"
+                  Background="Transparent" BorderThickness="0" />
           <Button Content="Edit" Command="{Binding BeginHeaderEditCommand}"
                   Background="Transparent" BorderThickness="0"
                   IsVisible="{Binding !IsEditingHeader}" />
@@ -47,7 +50,6 @@
       </Grid>
     </Border>
 
-    <!-- Status Bar -->
     <Border DockPanel.Dock="Bottom" Background="{StaticResource Itomori.Panel}" Padding="16,6">
       <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*">
         <Border Background="#2A2F3A" CornerRadius="3" Padding="8,2" Margin="0,0,12,0">
@@ -71,117 +73,289 @@
       </Grid>
     </Border>
 
-    <!-- Timeline at top (below header) -->
-    <views:TimelineCanvasView DockPanel.Dock="Top"
-                               DataContext="{Binding Timeline}"
-                               IsVisible="{Binding Timeline, Converter={x:Static ObjectConverters.IsNotNull}}" />
+    <Panel>
+      <Grid RowDefinitions="Auto,*" ColumnDefinitions="Auto,*">
+        <Grid Grid.Row="0"
+              Grid.ColumnSpan="2"
+              IsVisible="{Binding Timeline, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <views:TimelineCanvasView DataContext="{Binding Timeline}" />
+        </Grid>
 
-    <!-- Content Area -->
-    <Grid>
-      <!-- Main browse layout: facet sidebar + grid + detail drawer -->
-      <Grid ColumnDefinitions="Auto,*"
-            IsVisible="{Binding LogsPage, Converter={x:Static ObjectConverters.IsNotNull}}">
-        <!-- Facet sidebar -->
-        <views:FacetPanelView Grid.Column="0"
-                               DataContext="{Binding FacetPanel}"
-                               IsVisible="{Binding FacetPanel, Converter={x:Static ObjectConverters.IsNotNull}}"
-                               Width="220" />
+        <Grid Grid.Row="1"
+              Grid.Column="0"
+              Width="220"
+              IsVisible="{Binding FacetPanel, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <views:FacetPanelView DataContext="{Binding FacetPanel}" />
+        </Grid>
 
-        <!-- Grid + Detail drawer -->
-        <SplitView Grid.Column="1"
-                   IsPaneOpen="{Binding LogsPage.IsDetailOpen}"
-                   DisplayMode="Inline"
-                   PanePlacement="Right"
-                   OpenPaneLength="420">
-          <SplitView.Pane>
-            <views:DetailDrawerView DataContext="{Binding LogsPage}" />
-          </SplitView.Pane>
-          <views:LogGridView DataContext="{Binding LogsPage}" />
-        </SplitView>
+        <Grid Grid.Row="1"
+              Grid.Column="1"
+              IsVisible="{Binding LogsPage, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <SplitView IsPaneOpen="{Binding LogsPage.IsDetailOpen}"
+                     DisplayMode="Inline"
+                     PanePlacement="Right"
+                     OpenPaneLength="420">
+            <SplitView.Pane>
+              <views:DetailDrawerView DataContext="{Binding LogsPage}" />
+            </SplitView.Pane>
+            <views:LogGridView DataContext="{Binding LogsPage}" />
+          </SplitView>
+        </Grid>
       </Grid>
 
-      <!-- Ingestion staging + progress -->
-      <Border HorizontalAlignment="Right" VerticalAlignment="Top" Width="480"
-              Background="#AA1F2430" Padding="12" Margin="12" CornerRadius="8">
-        <StackPanel Spacing="10">
-          <TextBlock Text="Ingestion Queue" FontWeight="SemiBold" Foreground="{StaticResource Brush.NeonCyan}" />
-
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <Button Content="📂 Add Files" Name="AddFilesButton" />
-            <Button Content="📁 Add Folder" Name="AddFolderButton" />
-            <Button Content="Clear" Command="{Binding ClearStagedSourcesCommand}" IsEnabled="{Binding CanModifyStagedSources}" />
-            <Button Content="Start Ingestion" Command="{Binding StartIngestionCommand}" IsEnabled="{Binding CanStartIngestion}" />
-          </StackPanel>
-
-          <TextBlock Text="Sniffing staged files in background..."
-                     Foreground="{StaticResource Brush.NeonCyan}"
-                     IsVisible="{Binding HasSniffingInProgress}" />
-          <TextBlock Text="Some files need format confirmation before ingestion."
-                     Foreground="{StaticResource Brush.SakuraPink}"
-                     IsVisible="{Binding HasPendingDetectionReview}" />
-
-          <Grid ColumnDefinitions="Auto,Auto,Auto" IsVisible="{Binding IsIngesting}">
-            <TextBlock Text="{Binding OverallProgressDisplay}" Margin="0,0,10,0" />
-            <TextBlock Grid.Column="1" Text="{Binding OverallThroughputDisplay}" Margin="0,0,10,0" />
-            <TextBlock Grid.Column="2" Text="{Binding OverallEtaDisplay, StringFormat='ETA {0}'}" />
+      <Border HorizontalAlignment="Right"
+              VerticalAlignment="Stretch"
+              Width="760"
+              Background="{StaticResource Itomori.Panel}"
+              BorderBrush="#2A2F3A"
+              BorderThickness="1,0,0,0"
+              IsVisible="{Binding IsStagingPaneOpen}">
+        <Grid RowDefinitions="Auto,Auto,Auto,*">
+          <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="12,10,12,6">
+            <StackPanel Spacing="2">
+              <TextBlock Text="Staging queue"
+                         FontSize="15"
+                         FontWeight="SemiBold"
+                         Foreground="{StaticResource Brush.NeonCyan}" />
+              <TextBlock Text="{Binding StagingSummary}"
+                         FontSize="11"
+                         Foreground="{StaticResource Itomori.SubtleForeground}" />
+            </StackPanel>
+            <Button Grid.Column="1"
+                    Content="Hide"
+                    Command="{Binding ToggleStagingPaneCommand}"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    Padding="8,2" />
           </Grid>
 
-          <ListBox ItemsSource="{Binding StagedSources}" MaxHeight="320">
-            <ListBox.ItemTemplate>
-              <DataTemplate x:DataType="vm:StagedSourceItemViewModel">
-                <Border Padding="6">
-                  <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnDefinitions="*,Auto,Auto">
-                    <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding SourcePath}"
-                               TextTrimming="CharacterEllipsis"
-                               Foreground="{StaticResource Itomori.Foreground}" />
-                    <Border Grid.Row="0" Grid.Column="1" Background="#2A2F3A" CornerRadius="3" Padding="6,1" Margin="8,0">
-                      <TextBlock Text="{Binding DetectionBadge}" FontSize="11" />
+          <StackPanel Grid.Row="1"
+                      Orientation="Horizontal"
+                      Spacing="6"
+                      Margin="12,0,12,6">
+            <Button Content="Add files"
+                    Name="AddFilesButton"
+                    IsEnabled="{Binding CanModifyStagedSources}"
+                    Padding="10,4"
+                    FontSize="12" />
+            <Button Content="Add folder"
+                    Name="AddFolderButton"
+                    IsEnabled="{Binding CanModifyStagedSources}"
+                    Padding="10,4"
+                    FontSize="12" />
+            <Button Content="Clear"
+                    Command="{Binding ClearStagedSourcesCommand}"
+                    IsEnabled="{Binding CanModifyStagedSources}"
+                    Padding="10,4"
+                    FontSize="12" />
+            <Button Content="Start"
+                    Command="{Binding StartIngestionCommand}"
+                    IsEnabled="{Binding CanStartIngestion}"
+                    Padding="10,4"
+                    FontSize="12" />
+          </StackPanel>
+
+          <StackPanel Grid.Row="2" Spacing="3" Margin="12,0,12,6">
+            <TextBlock Text="Sniffing timestamp, timezone, encoding, and structure..."
+                       FontSize="11"
+                       Foreground="{StaticResource Brush.NeonCyan}"
+                       IsVisible="{Binding HasSniffingInProgress}" />
+            <TextBlock Text="Some staged files need confirmation before ingesting."
+                       FontSize="11"
+                       Foreground="{StaticResource Brush.SakuraPink}"
+                       IsVisible="{Binding HasPendingDetectionReview}" />
+            <Grid ColumnDefinitions="Auto,Auto,Auto" IsVisible="{Binding IsIngesting}">
+              <TextBlock Text="{Binding OverallProgressDisplay}" FontSize="11" Margin="0,0,10,0" />
+              <TextBlock Grid.Column="1" Text="{Binding OverallThroughputDisplay}" FontSize="11" Margin="0,0,10,0" />
+              <TextBlock Grid.Column="2" Text="{Binding OverallEtaDisplay, StringFormat='ETA {0}'}" FontSize="11" />
+            </Grid>
+          </StackPanel>
+
+          <Grid Grid.Row="3" ColumnDefinitions="3*,2*" ColumnSpacing="10" Margin="12,0,12,12">
+            <Border Background="#141922" CornerRadius="6" Padding="2">
+              <ListBox ItemsSource="{Binding StagedSources}"
+                       SelectedItem="{Binding SelectedStagedSource}"
+                       Background="Transparent"
+                       BorderThickness="0">
+                <ListBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:StagedSourceItemViewModel">
+                    <Border Padding="4,3" Margin="0,0,0,1" Background="#181C24" CornerRadius="3">
+                      <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto,Auto" RowSpacing="1">
+                        <TextBlock Text="{Binding SourceName}"
+                                   FontSize="11"
+                                   FontWeight="SemiBold"
+                                   Foreground="{StaticResource Itomori.Foreground}"
+                                   TextTrimming="CharacterEllipsis" />
+                        <Border Grid.Column="1" Background="#2A2F3A" CornerRadius="3" Padding="4,0" Margin="4,0,3,0">
+                          <TextBlock Text="{Binding ConfidenceDisplay}" FontSize="9" />
+                        </Border>
+                        <Border Grid.Column="2" Background="#2A2F3A" CornerRadius="3" Padding="4,0">
+                          <TextBlock Text="{Binding DetectionBadge}" FontSize="9" />
+                        </Border>
+
+                        <TextBlock Grid.Row="1" Grid.ColumnSpan="3"
+                                   Text="{Binding QueueSummary}"
+                                   FontSize="10"
+                                   Foreground="{StaticResource Itomori.SubtleForeground}"
+                                   TextTrimming="CharacterEllipsis" />
+
+                        <ProgressBar Grid.Row="2" Grid.ColumnSpan="3"
+                                     Height="2"
+                                     Minimum="0"
+                                     Maximum="1"
+                                     Value="{Binding ProgressRatio}" />
+                      </Grid>
                     </Border>
-                    <Button Grid.Row="0" Grid.Column="2" Content="Remove"
-                            Command="{Binding $parent[ListBox].DataContext.RemoveStagedSourceCommand}"
-                            CommandParameter="{Binding}"
-                            IsEnabled="{Binding CanEdit}" />
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </Border>
 
-                    <TextBlock Grid.Row="1" Grid.ColumnSpan="3"
-                               Text="{Binding DetectionStatus}"
-                               Foreground="{StaticResource Itomori.SubtleForeground}"
-                               Margin="0,4,0,0" />
+            <Grid Grid.Column="1">
+              <Border Background="#141922"
+                      CornerRadius="6"
+                      Padding="10"
+                      IsVisible="{Binding HasSelectedStagedSource}">
+                <ScrollViewer>
+                  <StackPanel DataContext="{Binding SelectedStagedSource}" Spacing="10">
+                    <StackPanel Spacing="3">
+                      <TextBlock Text="{Binding SourceName}"
+                                 FontSize="14"
+                                 FontWeight="SemiBold"
+                                 Foreground="{StaticResource Itomori.Foreground}" />
+                      <TextBlock Text="{Binding SourcePath}"
+                                 FontSize="11"
+                                 Foreground="{StaticResource Itomori.SubtleForeground}"
+                                 TextWrapping="Wrap" />
+                    </StackPanel>
 
-                    <StackPanel Grid.Row="2" Grid.ColumnSpan="3" Orientation="Horizontal" Spacing="8" Margin="0,4,0,0"
-                                IsVisible="{Binding !IsDirectory}">
-                      <TextBlock Text="Format" VerticalAlignment="Center" />
-                      <ComboBox Width="190"
-                                ItemsSource="{Binding DetectionChoices}"
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                      <Border Background="#2A2F3A" CornerRadius="3" Padding="6,2">
+                        <TextBlock Text="{Binding ConfidenceDisplay}" FontSize="10" />
+                      </Border>
+                      <Border Background="#2A2F3A" CornerRadius="3" Padding="6,2">
+                        <TextBlock Text="{Binding DetectionBadge}" FontSize="10" />
+                      </Border>
+                      <Border Background="#2A2F3A" CornerRadius="3" Padding="6,2">
+                        <TextBlock Text="{Binding Phase}" FontSize="10" />
+                      </Border>
+                    </StackPanel>
+
+                    <StackPanel Spacing="5">
+                      <TextBlock Text="Detected profile"
+                                 FontSize="11"
+                                 FontWeight="SemiBold"
+                                 Foreground="{StaticResource Itomori.SubtleForeground}" />
+                      <ComboBox ItemsSource="{Binding DetectionChoices}"
                                 SelectedItem="{Binding SelectedDetectionChoice}"
                                 DisplayMemberBinding="{Binding DisplayName}"
                                 IsEnabled="{Binding CanSelectDetection}" />
-                      <Button Content="Confirm"
-                              Command="{Binding $parent[ListBox].DataContext.ConfirmDetectionCommand}"
-                              CommandParameter="{Binding}"
-                              IsVisible="{Binding RequiresDetectionReview}" />
-                      <Button Content="Re-ingest"
-                              Command="{Binding $parent[ListBox].DataContext.ReingestSourceCommand}"
-                              CommandParameter="{Binding}"
-                              IsEnabled="{Binding CanReingest}" />
+                      <TextBlock Text="{Binding DetectionSummary}"
+                                 TextWrapping="Wrap"
+                                 FontSize="11"
+                                 Foreground="{StaticResource Itomori.Foreground}" />
+                      <TextBlock Text="This guess needs confirmation before ingesting."
+                                 FontSize="11"
+                                 Foreground="{StaticResource Brush.SakuraPink}"
+                                 TextWrapping="Wrap"
+                                 IsVisible="{Binding RequiresDetectionReview}" />
                     </StackPanel>
 
-                    <Grid Grid.Row="3" Grid.ColumnSpan="3" ColumnDefinitions="Auto,Auto,Auto,Auto" Margin="0,4,0,0">
-                      <TextBlock Text="{Binding Phase}" Margin="0,0,10,0" />
-                      <TextBlock Grid.Column="1" Text="{Binding ProgressDisplay}" Margin="0,0,10,0" />
-                      <TextBlock Grid.Column="2" Text="{Binding ThroughputDisplay}" Margin="0,0,10,0" />
-                      <TextBlock Grid.Column="3" Text="{Binding EtaDisplay, StringFormat='ETA {0}'}" />
-                    </Grid>
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                      <Button Content="Confirm choice"
+                              Command="{Binding $parent[UserControl].DataContext.ConfirmDetectionCommand}"
+                              CommandParameter="{Binding}"
+                              IsVisible="{Binding RequiresDetectionReview}"
+                              Padding="10,4"
+                              FontSize="12" />
+                      <Button Content="Re-ingest"
+                              Command="{Binding $parent[UserControl].DataContext.ReingestSourceCommand}"
+                              CommandParameter="{Binding}"
+                              IsEnabled="{Binding CanReingest}"
+                              Padding="10,4"
+                              FontSize="12" />
+                      <Button Content="Remove"
+                              Command="{Binding $parent[UserControl].DataContext.RemoveStagedSourceCommand}"
+                              CommandParameter="{Binding}"
+                              IsEnabled="{Binding CanEdit}"
+                              Padding="10,4"
+                              FontSize="12" />
+                    </StackPanel>
 
-                    <ProgressBar Grid.Row="4" Grid.ColumnSpan="3" Minimum="0" Maximum="1"
-                                 Value="{Binding ProgressRatio}" Height="6" Margin="0,6,0,0" />
-                  </Grid>
-                </Border>
-              </DataTemplate>
-            </ListBox.ItemTemplate>
-          </ListBox>
-        </StackPanel>
+                    <StackPanel Spacing="5" IsVisible="{Binding HasDetectionDetails}">
+                      <TextBlock Text="Details"
+                                 FontSize="11"
+                                 FontWeight="SemiBold"
+                                 Foreground="{StaticResource Itomori.SubtleForeground}" />
+                      <ItemsControl ItemsSource="{Binding DetectionDetails}">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="vm:DetectionDetailViewModel">
+                            <Grid ColumnDefinitions="Auto,*" Margin="0,0,0,4">
+                              <TextBlock Text="{Binding Label}"
+                                         FontSize="11"
+                                         Foreground="{StaticResource Itomori.SubtleForeground}"
+                                         Margin="0,0,8,0" />
+                              <TextBlock Grid.Column="1"
+                                         Text="{Binding Value}"
+                                         FontSize="11"
+                                         TextWrapping="Wrap"
+                                         Foreground="{StaticResource Itomori.Foreground}" />
+                            </Grid>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </StackPanel>
+
+                    <StackPanel Spacing="5" IsVisible="{Binding HasDetectionNotes}">
+                      <TextBlock Text="Detector notes"
+                                 FontSize="11"
+                                 FontWeight="SemiBold"
+                                 Foreground="{StaticResource Itomori.SubtleForeground}" />
+                      <TextBlock Text="{Binding DetectionNotes}"
+                                 FontSize="11"
+                                 TextWrapping="Wrap"
+                                 Foreground="{StaticResource Itomori.Foreground}" />
+                    </StackPanel>
+
+                    <StackPanel Spacing="5">
+                      <TextBlock Text="Progress"
+                                 FontSize="11"
+                                 FontWeight="SemiBold"
+                                 Foreground="{StaticResource Itomori.SubtleForeground}" />
+                      <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="4">
+                        <TextBlock Text="Bytes" FontSize="11" Foreground="{StaticResource Itomori.SubtleForeground}" />
+                        <TextBlock Grid.Column="1" Text="{Binding ProgressDisplay}" FontSize="11" />
+                        <TextBlock Grid.Row="1" Text="Rows" FontSize="11" Foreground="{StaticResource Itomori.SubtleForeground}" />
+                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding RecordsProcessed, StringFormat='{}{0:N0}'}" FontSize="11" />
+                        <TextBlock Grid.Row="2" Text="Throughput" FontSize="11" Foreground="{StaticResource Itomori.SubtleForeground}" />
+                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding ThroughputDisplay}" FontSize="11" />
+                        <TextBlock Grid.Row="3" Text="ETA" FontSize="11" Foreground="{StaticResource Itomori.SubtleForeground}" />
+                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding EtaDisplay}" FontSize="11" />
+                      </Grid>
+                      <TextBlock Text="{Binding Message}"
+                                 FontSize="11"
+                                 TextWrapping="Wrap"
+                                 Foreground="{StaticResource Itomori.SubtleForeground}"
+                                 IsVisible="{Binding Message, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                    </StackPanel>
+                  </StackPanel>
+                </ScrollViewer>
+              </Border>
+
+              <Border Background="#141922"
+                      CornerRadius="6"
+                      Padding="10"
+                      IsVisible="{Binding !HasSelectedStagedSource}">
+                <TextBlock Text="Select a staged file to inspect the guessed timestamp pattern, timezone handling, encoding, and structure."
+                           FontSize="11"
+                           TextWrapping="Wrap"
+                           Foreground="{StaticResource Itomori.SubtleForeground}" />
+              </Border>
+            </Grid>
+          </Grid>
+        </Grid>
       </Border>
-    </Grid>
+    </Panel>
   </DockPanel>
 
 </UserControl>

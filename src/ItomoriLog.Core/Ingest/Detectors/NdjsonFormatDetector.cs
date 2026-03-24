@@ -6,7 +6,7 @@ namespace ItomoriLog.Core.Ingest.Detectors;
 public sealed class NdjsonFormatDetector : IFormatDetector
 {
     private const int MinSniffLines = 5;
-    private const int MaxSniffLines = 2000;
+    private const int MaxSniffLines = 512;
     private const double MinParseRate = 0.95;
 
     private static readonly string[] TimestampFieldNames =
@@ -39,6 +39,8 @@ public sealed class NdjsonFormatDetector : IFormatDetector
                 continue;
 
             lines.Add(line);
+            if (!LooksLikeJsonObject(line))
+                continue;
 
             try
             {
@@ -143,5 +145,14 @@ public sealed class NdjsonFormatDetector : IFormatDetector
         }
 
         return null;
+    }
+
+    private static bool LooksLikeJsonObject(string line)
+    {
+        var trimmed = line.Trim();
+        return trimmed.Length >= 2
+            && trimmed[0] == '{'
+            && trimmed[^1] == '}'
+            && trimmed.Contains(':');
     }
 }

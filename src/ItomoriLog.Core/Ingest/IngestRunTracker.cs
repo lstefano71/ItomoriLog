@@ -20,12 +20,43 @@ public sealed class IngestRunTracker
         return runId;
     }
 
-    public async Task CompleteRunAsync(string runId, CancellationToken ct = default)
+    public async Task RegisterSourcesAsync(
+        string runId,
+        IReadOnlyList<string> sourcePaths,
+        CancellationToken ct = default)
+    {
+        if (sourcePaths.Count == 0)
+            return;
+
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = "INSERT INTO ingest_run_sources (run_id, source_path, source_order) VALUES ($1, $2, $3)";
+
+        for (var i = 0; i < sourcePaths.Count; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            cmd.Parameters.Clear();
+            cmd.Parameters.Add(new DuckDBParameter { Value = runId });
+            cmd.Parameters.Add(new DuckDBParameter { Value = sourcePaths[i] });
+            cmd.Parameters.Add(new DuckDBParameter { Value = i });
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+    }
+
+    public Task CompleteRunAsync(string runId, CancellationToken ct = default) =>
+        UpdateRunStatusAsync(runId, "completed", ct);
+
+    public Task FailRunAsync(string runId, CancellationToken ct = default) =>
+        UpdateRunStatusAsync(runId, "failed", ct);
+
+    public Task AbandonRunAsync(string runId, CancellationToken ct = default) =>
+        UpdateRunStatusAsync(runId, "abandoned", ct);
+
+    private async Task UpdateRunStatusAsync(string runId, string status, CancellationToken ct = default)
     {
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = "UPDATE ingest_runs SET completed_utc = $1, status = $2 WHERE run_id = $3";
         cmd.Parameters.Add(new DuckDBParameter { Value = DateTimeOffset.UtcNow.UtcDateTime });
-        cmd.Parameters.Add(new DuckDBParameter { Value = "completed" });
+        cmd.Parameters.Add(new DuckDBParameter { Value = status });
         cmd.Parameters.Add(new DuckDBParameter { Value = runId });
         await cmd.ExecuteNonQueryAsync(ct);
     }

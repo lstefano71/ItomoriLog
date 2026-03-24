@@ -8,7 +8,7 @@ public static class EncodingDetector
     {
         stream.Position = 0;
         Span<byte> bom = stackalloc byte[4];
-        int read = stream.Read(bom);
+        int read = stream.ReadAtLeast(bom, minimumBytes: 1, throwOnEndOfStream: false);
         stream.Position = 0;
 
         if (read >= 3 && bom[0] == 0xEF && bom[1] == 0xBB && bom[2] == 0xBF)
@@ -21,15 +21,39 @@ public static class EncodingDetector
         // Try UTF-8 validation
         stream.Position = 0;
         var buffer = new byte[Math.Min(stream.Length, 8192)];
-        stream.Read(buffer);
+        var bytesRead = ReadFully(stream, buffer);
         stream.Position = 0;
 
-        if (IsValidUtf8(buffer))
+        if (IsValidUtf8(buffer.AsSpan(0, bytesRead)))
             return Encoding.UTF8;
 
         // Fallback to Windows-1252
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         return Encoding.GetEncoding(1252);
+    }
+
+    public static string Describe(Encoding encoding) =>
+        encoding.CodePage switch
+        {
+            65001 => "UTF-8",
+            1200 => "UTF-16 LE",
+            1201 => "UTF-16 BE",
+            1252 => "Windows-1252",
+            _ => encoding.WebName
+        };
+
+    private static int ReadFully(Stream stream, Span<byte> buffer)
+    {
+        var totalRead = 0;
+        while (totalRead < buffer.Length)
+        {
+            var read = stream.Read(buffer[totalRead..]);
+            if (read == 0)
+                break;
+            totalRead += read;
+        }
+
+        return totalRead;
     }
 
     private static bool IsValidUtf8(ReadOnlySpan<byte> data)

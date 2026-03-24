@@ -81,6 +81,8 @@ public class CommandPaletteViewModelTests
 
         vm.Toggle();
         vm.IsOpen.Should().BeTrue();
+        vm.SelectedCommand.Should().NotBeNull();
+        vm.SelectedCommand!.Name.Should().Be("New Session");
 
         vm.Toggle();
         vm.IsOpen.Should().BeFalse();
@@ -135,5 +137,21 @@ public class CommandPaletteViewModelTests
 
         vm.FilteredCommands.Should().BeEmpty();
         vm.SelectedCommand.Should().BeNull();
+    }
+
+    [Fact]
+    public void MoveSelectionBy_ClampsWithinFilteredCommands()
+    {
+        var vm = new CommandPaletteViewModel(SampleCommands());
+
+        vm.Open();
+        vm.MoveSelectionBy(3);
+        vm.SelectedCommand!.Name.Should().Be("Toggle Detail Panel");
+
+        vm.MoveSelectionBy(99);
+        vm.SelectedCommand!.Name.Should().Be("About");
+
+        vm.MoveSelectionBy(-99);
+        vm.SelectedCommand!.Name.Should().Be("New Session");
     }
 }

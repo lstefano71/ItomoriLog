@@ -36,14 +36,26 @@ public sealed class IngestOrchestrator
     {
         var tracker = new IngestRunTracker(_connection);
         var runId = await tracker.StartRunAsync(ct);
+        await tracker.RegisterSourcesAsync(
+            runId,
+            filePaths
+                .Select(CanonicalizeSourcePath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            ct);
+
         var skipSink = new ListSkipSink();
         var segmentRows = new List<SegmentUpsertRow>();
         var totalRows = 0L;
         var filesProcessed = 0;
         var entries = new List<FileToIngest>();
+        var transactionOpen = false;
 
         try
         {
+            await ExecuteControlStatementAsync("BEGIN TRANSACTION", ct);
+            transactionOpen = true;
+
             // Expand ZIP files
             entries.Clear();
             foreach (var path in filePaths)
@@ -154,6 +166,8 @@ public sealed class IngestOrchestrator
             }
 
             await tracker.CompleteRunAsync(runId, ct);
+            await ExecuteControlStatementAsync("COMMIT", ct);
+            transactionOpen = false;
 
             return new IngestResult(
                 RunId: runId,
@@ -162,9 +176,20 @@ public sealed class IngestOrchestrator
                 Skips: skipSink.GetSkips(),
                 Status: "completed");
         }
+        catch (OperationCanceledException)
+        {
+            if (transactionOpen)
+                await ExecuteControlStatementAsync("ROLLBACK", CancellationToken.None);
+
+            await tracker.AbandonRunAsync(runId, CancellationToken.None);
+            throw;
+        }
         catch (Exception) when (ct.IsCancellationRequested is false)
         {
-            try { await tracker.CompleteRunAsync(runId, ct); } catch { }
+            if (transactionOpen)
+                await ExecuteControlStatementAsync("ROLLBACK", CancellationToken.None);
+
+            await tracker.FailRunAsync(runId, CancellationToken.None);
             foreach (var entry in entries)
             {
                 progress?.Report(new IngestProgressUpdate(
@@ -194,14 +219,9 @@ public sealed class IngestOrchestrator
         var logicalSourceId = IdentityGenerator.LogicalSourceId(entry.FileName);
         var lastModifiedUtc = ResolveLastModifiedUtc(canonicalSourcePath, entry.isZipEntry);
         var totalBytes = stream.Length;
+        var progressReporter = new ProgressReporter(canonicalSourcePath, totalBytes, progress);
 
-        progress?.Report(new IngestProgressUpdate(
-            SourcePath: canonicalSourcePath,
-            Phase: IngestFilePhase.Sniffing,
-            BytesProcessed: 0,
-            BytesTotal: totalBytes,
-            RecordsProcessed: 0,
-            Message: "Sniffing"));
+        progressReporter.Report(IngestFilePhase.Sniffing, 0, 0, "Sniffing", force: true);
 
         // Detect format
         DetectionResult? detection;
@@ -232,13 +252,12 @@ public sealed class IngestOrchestrator
                 var failedFileSize = stream.Length;
                 var failedFileHash = await ComputeStreamHashAsync(stream, ct);
 
-                progress?.Report(new IngestProgressUpdate(
-                    SourcePath: canonicalSourcePath,
-                    Phase: IngestFilePhase.Skipped,
-                    BytesProcessed: failedFileSize,
-                    BytesTotal: failedFileSize,
-                    RecordsProcessed: 0,
-                    Message: "Not recognized"));
+                progressReporter.Report(
+                    IngestFilePhase.Skipped,
+                    failedFileSize,
+                    0,
+                    "Not recognized",
+                    force: true);
 
                 return new SegmentUpsertRow(
                     SegmentId: failedSegmentId,
@@ -257,13 +276,7 @@ public sealed class IngestOrchestrator
             }
         }
 
-        progress?.Report(new IngestProgressUpdate(
-            SourcePath: canonicalSourcePath,
-            Phase: IngestFilePhase.Ingesting,
-            BytesProcessed: 0,
-            BytesTotal: totalBytes,
-            RecordsProcessed: 0,
-            Message: "Ingesting"));
+        progressReporter.Report(IngestFilePhase.Ingesting, 0, 0, "Ingesting", force: true);
 
         // Generate identity
         var physicalFileId = IdentityGenerator.PhysicalFileId(
@@ -357,34 +370,32 @@ public sealed class IngestOrchestrator
                 Message: message,
                 FieldsJson: fieldsJson));
 
-            progress?.Report(new IngestProgressUpdate(
-                SourcePath: canonicalSourcePath,
-                Phase: IngestFilePhase.Ingesting,
-                BytesProcessed: Math.Min(raw.EndByteOffset, totalBytes),
-                BytesTotal: totalBytes,
-                RecordsProcessed: recordIndex,
-                Message: "Ingesting"));
+            progressReporter.Report(
+                IngestFilePhase.Ingesting,
+                Math.Min(raw.EndByteOffset, totalBytes),
+                recordIndex,
+                "Ingesting");
 
             if (batch.Count >= 50_000)
             {
-                await writer.WriteAsync(batch.ToList(), ct);
-                batch.Clear();
+                var readyBatch = batch;
+                batch = new List<LogRow>(50_000);
+                await writer.WriteAsync(readyBatch, ct);
             }
         }
 
         // Flush remaining
         if (batch.Count > 0)
-            await writer.WriteAsync(batch.ToList(), ct);
+            await writer.WriteAsync(batch, ct);
 
         var fileHash = await ComputeStreamHashAsync(stream, ct);
 
-        progress?.Report(new IngestProgressUpdate(
-            SourcePath: canonicalSourcePath,
-            Phase: IngestFilePhase.Completed,
-            BytesProcessed: totalBytes,
-            BytesTotal: totalBytes,
-            RecordsProcessed: recordIndex,
-            Message: "Completed"));
+        progressReporter.Report(
+            IngestFilePhase.Completed,
+            totalBytes,
+            recordIndex,
+            "Completed",
+            force: true);
 
         return new SegmentUpsertRow(
             SegmentId: segmentId,
@@ -462,8 +473,71 @@ public sealed class IngestOrchestrator
         return Convert.ToHexStringLower(hashBytes);
     }
 
+    private async Task ExecuteControlStatementAsync(string sql, CancellationToken ct)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = sql;
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     private static Func<string, long> BuildByteCounter(Encoding encoding) =>
         line => encoding.GetByteCount(line);
+
+    private sealed class ProgressReporter
+    {
+        private static readonly TimeSpan MinInterval = TimeSpan.FromMilliseconds(250);
+        private const long MinRecordDelta = 5_000;
+        private const long MinByteDelta = 256 * 1024;
+
+        private readonly string _sourcePath;
+        private readonly long _bytesTotal;
+        private readonly IProgress<IngestProgressUpdate>? _progress;
+        private DateTimeOffset _lastReportedUtc = DateTimeOffset.MinValue;
+        private long _lastReportedBytes;
+        private long _lastReportedRecords;
+
+        public ProgressReporter(string sourcePath, long bytesTotal, IProgress<IngestProgressUpdate>? progress)
+        {
+            _sourcePath = sourcePath;
+            _bytesTotal = bytesTotal;
+            _progress = progress;
+        }
+
+        public void Report(
+            IngestFilePhase phase,
+            long bytesProcessed,
+            long recordsProcessed,
+            string? message,
+            bool force = false)
+        {
+            if (_progress is null)
+                return;
+
+            var now = DateTimeOffset.UtcNow;
+            var shouldReport = force
+                || _lastReportedUtc == DateTimeOffset.MinValue
+                || bytesProcessed >= _bytesTotal
+                || phase != IngestFilePhase.Ingesting
+                || recordsProcessed - _lastReportedRecords >= MinRecordDelta
+                || bytesProcessed - _lastReportedBytes >= MinByteDelta
+                || now - _lastReportedUtc >= MinInterval;
+
+            if (!shouldReport)
+                return;
+
+            _lastReportedUtc = now;
+            _lastReportedBytes = bytesProcessed;
+            _lastReportedRecords = recordsProcessed;
+
+            _progress.Report(new IngestProgressUpdate(
+                SourcePath: _sourcePath,
+                Phase: phase,
+                BytesProcessed: bytesProcessed,
+                BytesTotal: _bytesTotal,
+                RecordsProcessed: recordsProcessed,
+                Message: message));
+        }
+    }
 }
 
 public sealed record IngestResult(

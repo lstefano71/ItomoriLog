@@ -97,6 +97,16 @@ public static class SchemaInitializer
             status        VARCHAR NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS ingest_run_sources (
+            run_id        VARCHAR NOT NULL,
+            source_path   VARCHAR NOT NULL,
+            source_order  INTEGER NOT NULL,
+            PRIMARY KEY (run_id, source_path)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ingest_run_sources_run
+            ON ingest_run_sources (run_id, source_order);
+
         CREATE TABLE IF NOT EXISTS query_history (
             id           INTEGER PRIMARY KEY,
             query_text   VARCHAR NOT NULL,

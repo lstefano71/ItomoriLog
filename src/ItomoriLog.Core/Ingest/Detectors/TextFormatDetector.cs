@@ -6,6 +6,7 @@ namespace ItomoriLog.Core.Ingest.Detectors;
 public sealed class TextFormatDetector : IFormatDetector
 {
     private const int MinSniffLines = 20;
+    private const int MaxSniffLines = 512;
     private const double MinConfidence = 0.50;
 
     public DetectionResult? Probe(Stream sample, string sourceName)
@@ -15,7 +16,7 @@ public sealed class TextFormatDetector : IFormatDetector
 
         var lines = new List<string>();
         string? line;
-        while ((line = reader.ReadLine()) is not null && lines.Count < 2000)
+        while ((line = reader.ReadLine()) is not null && lines.Count < MaxSniffLines)
         {
             if (!string.IsNullOrWhiteSpace(line))
                 lines.Add(line);
@@ -40,7 +41,7 @@ public sealed class TextFormatDetector : IFormatDetector
                 var extractor = new RegexGroupTsExtractor(pattern);
                 best = new DetectionResult(
                     Confidence: confidence,
-                    Boundary: new TextSoRBoundary(pattern),
+                    Boundary: new TextSoRBoundary(pattern, Anchored: true, PatternName: name),
                     Extractor: extractor,
                     Notes: $"Pattern: {name}, ParseRate: {parseRate:P0}");
             }

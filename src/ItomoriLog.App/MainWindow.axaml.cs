@@ -75,6 +75,17 @@ public partial class MainWindow : Window
             }
         }
 
+        // Ctrl+Shift+S: toggle staging queue
+        if (e.Key == Key.S
+            && e.KeyModifiers.HasFlag(KeyModifiers.Control)
+            && e.KeyModifiers.HasFlag(KeyModifiers.Shift)
+            && vm.CurrentView is SessionShellViewModel stagingSession)
+        {
+            stagingSession.ToggleStagingPaneCommand.Execute().Subscribe();
+            e.Handled = true;
+            return;
+        }
+
         // F5: refresh current logs page
         if (e.Key == Key.F5 && vm.CurrentView is SessionShellViewModel refreshSession && refreshSession.LogsPage is { } refreshLogs)
         {
@@ -111,20 +122,27 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 return;
             }
-        }
-
-        // PageUp/PageDown: Navigate log pages
-        if (vm.CurrentView is SessionShellViewModel sessionVm && sessionVm.LogsPage is { } logsPage)
-        {
-            if (e.Key == Key.PageDown && logsPage.HasNextPage)
+            if (vm.CurrentView is SessionShellViewModel timelineSession && timelineSession.Timeline is { HasSelection: true } timeline)
             {
-                logsPage.NextPageCommand.Execute().Subscribe();
+                timeline.ClearSelection(notifyListeners: true);
                 e.Handled = true;
                 return;
             }
-            if (e.Key == Key.PageUp && logsPage.HasPreviousPage)
+        }
+
+        // PageDown: load more rows in the log view
+        if (vm.CurrentView is SessionShellViewModel sessionVm && sessionVm.LogsPage is { } logsPage)
+        {
+            if (e.Key == Key.End && e.KeyModifiers.HasFlag(KeyModifiers.Control) && logsPage.HasNextPage)
             {
-                logsPage.PreviousPageCommand.Execute().Subscribe();
+                logsPage.LoadToEndCommand.Execute().Subscribe();
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Key == Key.PageDown && logsPage.HasNextPage)
+            {
+                logsPage.LoadMoreCommand.Execute().Subscribe();
                 e.Handled = true;
                 return;
             }

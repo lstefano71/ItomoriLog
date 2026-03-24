@@ -40,10 +40,20 @@ public class MainWindowViewModel : ReactiveObject
                     if (CurrentView is SessionShellViewModel session && session.LogsPage is { } logs)
                         logs.RefreshCommand.Execute().Subscribe();
                 }),
+            new PaletteCommand("Toggle Staging Pane", "Show or hide the staging queue", "Ctrl+Shift+S",
+                () =>
+                {
+                    if (CurrentView is SessionShellViewModel session)
+                        session.ToggleStagingPaneCommand.Execute().Subscribe();
+                }),
             new PaletteCommand("Add Files...", "Open file picker to ingest more logs", "Ctrl+O",
                 () =>
                 {
-                    // file picker is handled in MainWindow keybinding / shell view
+                    if (CurrentView is SessionShellViewModel session)
+                    {
+                        session.OpenStagingPane();
+                        session.RequestOpenFilePicker();
+                    }
                 }),
             new PaletteCommand("Start Ingestion", "Start ingesting staged files and folders", "Ctrl+I",
                 () =>

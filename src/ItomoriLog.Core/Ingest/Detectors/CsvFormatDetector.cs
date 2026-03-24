@@ -6,7 +6,7 @@ namespace ItomoriLog.Core.Ingest.Detectors;
 public sealed class CsvFormatDetector : IFormatDetector
 {
     private const int MinSniffLines = 5;
-    private const int MaxSniffLines = 2000;
+    private const int MaxSniffLines = 512;
     private const double MinParseRate = 0.95;
 
     private static readonly char[] CandidateDelimiters = [',', ';', '\t', '|'];

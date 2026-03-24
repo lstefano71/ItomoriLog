@@ -17,84 +17,90 @@
                 HorizontalAlignment="Right" VerticalAlignment="Top" />
       </StackPanel>
 
-      <!-- TabControl for Overview / Structured / Raw -->
-      <TabControl Grid.Row="1"
-                  IsVisible="{Binding SelectedRow, Converter={x:Static ObjectConverters.IsNotNull}}">
-        <TabItem Header="Overview">
-          <ScrollViewer>
-            <StackPanel Spacing="8" Margin="0,8">
-              <TextBlock Text="Timestamp" FontWeight="SemiBold"
-                         Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" />
-              <TextBlock Text="{Binding SelectedRow.Timestamp}"
-                         Foreground="{StaticResource Itomori.Foreground}" />
+      <ContentControl Grid.Row="1"
+                      Content="{Binding SelectedRow}"
+                      IsVisible="{Binding SelectedRow, Converter={x:Static ObjectConverters.IsNotNull}}">
+        <ContentControl.ContentTemplate>
+          <DataTemplate x:DataType="vm:LogRowDto">
+            <TabControl>
+              <TabItem Header="Overview">
+                <ScrollViewer>
+                  <StackPanel Spacing="8" Margin="0,8">
+                    <TextBlock Text="Timestamp" FontWeight="SemiBold"
+                               Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" />
+                    <TextBlock Text="{Binding Timestamp}"
+                               Foreground="{StaticResource Itomori.Foreground}" />
 
-              <TextBlock Text="Level" FontWeight="SemiBold"
-                         Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" Margin="0,8,0,0" />
-              <TextBlock Text="{Binding SelectedRow.Level}"
-                         Foreground="{StaticResource Itomori.Foreground}" />
+                    <TextBlock Text="Level" FontWeight="SemiBold"
+                               Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" Margin="0,8,0,0" />
+                    <TextBlock Text="{Binding Level}"
+                               Foreground="{StaticResource Itomori.Foreground}" />
 
-              <TextBlock Text="Source" FontWeight="SemiBold"
-                         Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" Margin="0,8,0,0" />
-              <TextBlock Text="{Binding SelectedRow.Source}"
-                         Foreground="{StaticResource Itomori.Foreground}" />
+                    <TextBlock Text="Source" FontWeight="SemiBold"
+                               Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" Margin="0,8,0,0" />
+                    <TextBlock Text="{Binding Source}"
+                               Foreground="{StaticResource Itomori.Foreground}" />
 
-              <TextBlock Text="Source Path" FontWeight="SemiBold"
-                         Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" Margin="0,8,0,0" />
-              <TextBlock Text="{Binding SelectedRow.SourcePath}"
-                         Foreground="{StaticResource Itomori.Foreground}" TextWrapping="Wrap" />
+                    <TextBlock Text="Source Path" FontWeight="SemiBold"
+                               Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" Margin="0,8,0,0" />
+                    <TextBlock Text="{Binding SourcePath}"
+                               Foreground="{StaticResource Itomori.Foreground}" TextWrapping="Wrap" />
 
-              <TextBlock Text="Segment ID" FontWeight="SemiBold"
-                         Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" Margin="0,8,0,0" />
-              <TextBlock Text="{Binding SelectedRow.SegmentId}"
-                         Foreground="{StaticResource Itomori.Foreground}" FontSize="11" />
+                    <TextBlock Text="Segment ID" FontWeight="SemiBold"
+                               Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" Margin="0,8,0,0" />
+                    <TextBlock Text="{Binding SegmentId}"
+                               Foreground="{StaticResource Itomori.Foreground}" FontSize="11" />
 
-              <TextBlock Text="Record Index" FontWeight="SemiBold"
-                         Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" Margin="0,8,0,0" />
-              <TextBlock Text="{Binding SelectedRow.RecordIndex}"
-                         Foreground="{StaticResource Itomori.Foreground}" />
+                    <TextBlock Text="Record Index" FontWeight="SemiBold"
+                               Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" Margin="0,8,0,0" />
+                    <TextBlock Text="{Binding RecordIndex}"
+                               Foreground="{StaticResource Itomori.Foreground}" />
 
-              <TextBlock Text="Timestamp Basis" FontWeight="SemiBold"
-                         Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" Margin="0,8,0,0" />
-              <TextBlock Text="{Binding SelectedRow.TimestampBasis}"
-                         Foreground="{StaticResource Itomori.Foreground}" />
+                    <TextBlock Text="Timestamp Basis" FontWeight="SemiBold"
+                               Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" Margin="0,8,0,0" />
+                    <TextBlock Text="{Binding TimestampBasis}"
+                               Foreground="{StaticResource Itomori.Foreground}" />
 
-              <TextBlock Text="Offset (minutes)" FontWeight="SemiBold"
-                         Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" Margin="0,8,0,0" />
-              <TextBlock Text="{Binding SelectedRow.OffsetMinutes}"
-                         Foreground="{StaticResource Itomori.Foreground}" />
-            </StackPanel>
-          </ScrollViewer>
-        </TabItem>
+                    <TextBlock Text="Offset (minutes)" FontWeight="SemiBold"
+                               Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" Margin="0,8,0,0" />
+                    <TextBlock Text="{Binding OffsetMinutes}"
+                               Foreground="{StaticResource Itomori.Foreground}" />
+                  </StackPanel>
+                </ScrollViewer>
+              </TabItem>
 
-        <TabItem Header="Structured">
-          <ScrollViewer>
-            <TextBlock Text="{Binding SelectedRow.FieldsJson}"
-                       Foreground="{StaticResource Itomori.Foreground}"
-                       FontFamily="Cascadia Code,Consolas,monospace"
-                       FontSize="12" TextWrapping="Wrap"
-                       Margin="0,8" />
-          </ScrollViewer>
-        </TabItem>
+              <TabItem Header="Structured">
+                <ScrollViewer>
+                  <TextBlock Text="{Binding FieldsJson}"
+                             Foreground="{StaticResource Itomori.Foreground}"
+                             FontFamily="Cascadia Code,Consolas,monospace"
+                             FontSize="12" TextWrapping="Wrap"
+                             Margin="0,8" />
+                </ScrollViewer>
+              </TabItem>
 
-        <TabItem Header="Raw">
-          <ScrollViewer>
-            <StackPanel Spacing="4" Margin="0,8">
-              <TextBlock Text="Original Timestamp" FontWeight="SemiBold"
-                         Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" />
-              <TextBlock Text="{Binding SelectedRow.TimestampOriginal}"
-                         Foreground="{StaticResource Itomori.Foreground}"
-                         FontFamily="Cascadia Code,Consolas,monospace" FontSize="12" />
+              <TabItem Header="Raw">
+                <ScrollViewer>
+                  <StackPanel Spacing="4" Margin="0,8">
+                    <TextBlock Text="Original Timestamp" FontWeight="SemiBold"
+                               Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" />
+                    <TextBlock Text="{Binding TimestampOriginal}"
+                               Foreground="{StaticResource Itomori.Foreground}"
+                               FontFamily="Cascadia Code,Consolas,monospace" FontSize="12" />
 
-              <TextBlock Text="Message" FontWeight="SemiBold"
-                         Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" Margin="0,8,0,0" />
-              <TextBlock Text="{Binding SelectedRow.Message}"
-                         Foreground="{StaticResource Itomori.Foreground}"
-                         FontFamily="Cascadia Code,Consolas,monospace" FontSize="12"
-                         TextWrapping="Wrap" />
-            </StackPanel>
-          </ScrollViewer>
-        </TabItem>
-      </TabControl>
+                    <TextBlock Text="Message" FontWeight="SemiBold"
+                               Foreground="{StaticResource Itomori.SubtleForeground}" FontSize="11" Margin="0,8,0,0" />
+                    <TextBlock Text="{Binding Message}"
+                               Foreground="{StaticResource Itomori.Foreground}"
+                               FontFamily="Cascadia Code,Consolas,monospace" FontSize="12"
+                               TextWrapping="Wrap" />
+                  </StackPanel>
+                </ScrollViewer>
+              </TabItem>
+            </TabControl>
+          </DataTemplate>
+        </ContentControl.ContentTemplate>
+      </ContentControl>
 
       <!-- No selection placeholder -->
       <TextBlock Grid.Row="1" Text="Select a row to see details"

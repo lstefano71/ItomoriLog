@@ -1,8 +1,9 @@
+using System.Reactive;
 using System.Reactive.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
-using Avalonia.Media;
+using ItomoriLog.Core.Query;
 using ReactiveUI;
 using ItomoriLog.UI.ViewModels;
 
@@ -10,19 +11,16 @@ namespace ItomoriLog.UI.Views;
 
 public partial class TimelineCanvasView : UserControl
 {
-    // Severity brushes (resolved once)
-    private static readonly SolidColorBrush InfoBrush = new(Color.Parse("#38BDF8"));
-    private static readonly SolidColorBrush WarnBrush = new(Color.Parse("#F59E0B"));
-    private static readonly SolidColorBrush ErrorBrush = new(Color.Parse("#EF4444"));
-    private static readonly SolidColorBrush DebugBrush = new(Color.Parse("#9CA3AF"));
-    private static readonly SolidColorBrush DefaultBrush = new(Color.Parse("#D6E2F0"));
-    private static readonly SolidColorBrush SelectionBrush = new(Color.Parse("#40FF6DAE"));
-    private static readonly Pen GridPen = new(new SolidColorBrush(Color.Parse("#2A2F3A")), 1);
+    private const double SelectionDragThreshold = 6;
 
     private bool _isDragging;
     private Point _dragStart;
     private double _dragStartX;
     private bool _isSelecting;
+    private bool _isSlidingSelection;
+    private DateTimeOffset? _slideAnchorTimestamp;
+    private DateTimeOffset? _slideSelectionStart;
+    private DateTimeOffset? _slideSelectionEnd;
 
     public TimelineCanvasView()
     {
@@ -33,15 +31,20 @@ public partial class TimelineCanvasView : UserControl
         TimelineCanvas.PointerMoved += OnPointerMoved;
         TimelineCanvas.PointerReleased += OnPointerReleased;
 
-        // Re-render when bins change
         this.WhenAnyValue(x => x.DataContext)
-            .OfType<TimelineViewModel>()
-            .Subscribe(vm =>
-            {
-                vm.WhenAnyValue(x => x.Bins)
-                    .ObserveOn(RxApp.MainThreadScheduler)
-                    .Subscribe(_ => TimelineCanvas.InvalidateVisual());
-            });
+            .Select(context => context as TimelineViewModel)
+            .Select(vm => vm is null
+                ? Observable.Empty<Unit>()
+                : vm.WhenAnyValue(
+                        x => x.Bins,
+                        x => x.VisibleStart,
+                        x => x.VisibleEnd,
+                        x => x.SelectedStart,
+                        x => x.SelectedEnd,
+                        (_, _, _, _, _) => Unit.Default))
+            .Switch()
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(_ => TimelineCanvas.InvalidateVisual());
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
@@ -49,60 +52,6 @@ public partial class TimelineCanvasView : UserControl
         base.OnPropertyChanged(change);
         if (change.Property == BoundsProperty)
             TimelineCanvas.InvalidateVisual();
-    }
-
-    public override void Render(DrawingContext context)
-    {
-        base.Render(context);
-        RenderTimeline(context);
-    }
-
-    private void RenderTimeline(DrawingContext context)
-    {
-        if (DataContext is not TimelineViewModel vm || vm.Bins.Length == 0)
-            return;
-
-        var bounds = TimelineCanvas.Bounds;
-        if (bounds.Width <= 0 || bounds.Height <= 0) return;
-
-        var bins = vm.Bins;
-        var maxCount = bins.Max(b => b.Count);
-        if (maxCount == 0) return;
-
-        var visibleStart = vm.VisibleStart ?? bins[0].Start;
-        var visibleEnd = vm.VisibleEnd ?? bins[^1].End;
-        var totalTicks = (visibleEnd - visibleStart).Ticks;
-        if (totalTicks <= 0) return;
-
-        var canvasW = bounds.Width;
-        var canvasH = bounds.Height - 4; // small margin at bottom
-
-        // Draw each bin as a colored rectangle
-        foreach (var bin in bins)
-        {
-            if (bin.End <= visibleStart || bin.Start >= visibleEnd)
-                continue;
-
-            var x = (bin.Start - visibleStart).Ticks / (double)totalTicks * canvasW;
-            var w = (bin.End - bin.Start).Ticks / (double)totalTicks * canvasW;
-            var h = bin.Count / (double)maxCount * canvasH;
-            var y = canvasH - h;
-
-            if (w < 1) w = 1;
-
-            var brush = GetLevelBrush(bin.DominantLevel);
-            context.DrawRectangle(brush, null, new Rect(x, y, w, h));
-        }
-
-        // Draw selection overlay
-        if (vm.SelectedStart.HasValue && vm.SelectedEnd.HasValue)
-        {
-            var selStart = vm.SelectedStart.Value;
-            var selEnd = vm.SelectedEnd.Value;
-            var sx = (selStart - visibleStart).Ticks / (double)totalTicks * canvasW;
-            var sw = (selEnd - selStart).Ticks / (double)totalTicks * canvasW;
-            context.DrawRectangle(SelectionBrush, null, new Rect(sx, 0, sw, canvasH));
-        }
     }
 
     private void OnPointerWheelChanged(object? sender, PointerWheelEventArgs e)
@@ -123,17 +72,38 @@ public partial class TimelineCanvasView : UserControl
         var point = e.GetPosition(TimelineCanvas);
         _dragStart = point;
         _dragStartX = point.X;
+        e.Pointer.Capture(TimelineCanvas);
 
         if (e.GetCurrentPoint(TimelineCanvas).Properties.IsRightButtonPressed)
         {
+            if (!IsPointInSelection(vm, point.X) && !TryGetBinAtPoint(vm, point, out _) && vm.HasSelection)
+            {
+                vm.ClearSelection(notifyListeners: true);
+                TimelineCanvas.InvalidateVisual();
+                e.Pointer.Capture(null);
+                e.Handled = true;
+                return;
+            }
+
             // Right-click: start panning
             _isDragging = true;
             e.Handled = true;
         }
         else
         {
-            // Left-click: start selection
-            _isSelecting = true;
+            var pointerTs = XToTimestamp(vm, point.X);
+            if (pointerTs.HasValue && IsPointInSelection(vm, point.X))
+            {
+                _isSlidingSelection = true;
+                _slideAnchorTimestamp = pointerTs.Value;
+                _slideSelectionStart = vm.SelectedStart;
+                _slideSelectionEnd = vm.SelectedEnd;
+            }
+            else
+            {
+                _isSelecting = true;
+            }
+
             e.Handled = true;
         }
     }
@@ -152,9 +122,23 @@ public partial class TimelineCanvasView : UserControl
             _dragStart = point;
             TimelineCanvas.InvalidateVisual();
         }
+        else if (_isSlidingSelection)
+        {
+            var currentTs = XToTimestamp(vm, point.X);
+            if (!currentTs.HasValue || !_slideAnchorTimestamp.HasValue || !_slideSelectionStart.HasValue || !_slideSelectionEnd.HasValue)
+                return;
+
+            var delta = currentTs.Value - _slideAnchorTimestamp.Value;
+            var range = ClampSelectionToSession(vm, _slideSelectionStart.Value + delta, _slideSelectionEnd.Value + delta);
+            vm.SelectedStart = range.Start;
+            vm.SelectedEnd = range.End;
+            TimelineCanvas.InvalidateVisual();
+        }
         else if (_isSelecting)
         {
-            // Show selection preview
+            if (Math.Abs(point.X - _dragStartX) < SelectionDragThreshold)
+                return;
+
             var startTs = XToTimestamp(vm, _dragStartX);
             var endTs = XToTimestamp(vm, point.X);
             if (startTs.HasValue && endTs.HasValue)
@@ -175,12 +159,41 @@ public partial class TimelineCanvasView : UserControl
         if (_isDragging)
         {
             _isDragging = false;
+            e.Pointer.Capture(null);
             _ = vm.RefineVisibleAsync();
+        }
+        else if (_isSlidingSelection)
+        {
+            _isSlidingSelection = false;
+            e.Pointer.Capture(null);
+            _slideAnchorTimestamp = null;
+            _slideSelectionStart = null;
+            _slideSelectionEnd = null;
+
+            if (vm.SelectedStart.HasValue && vm.SelectedEnd.HasValue)
+                vm.SelectTimeRange(vm.SelectedStart.Value, vm.SelectedEnd.Value);
         }
         else if (_isSelecting)
         {
             _isSelecting = false;
+            e.Pointer.Capture(null);
             var point = e.GetPosition(TimelineCanvas);
+            if (Math.Abs(point.X - _dragStartX) < SelectionDragThreshold)
+            {
+                if (TryGetBinAtPoint(vm, point, out var selectedBin))
+                {
+                    vm.SelectTimeRange(selectedBin.Start, selectedBin.End);
+                    TimelineCanvas.InvalidateVisual();
+                }
+                else if (vm.HasSelection)
+                {
+                    vm.ClearSelection(notifyListeners: true);
+                    TimelineCanvas.InvalidateVisual();
+                }
+
+                return;
+            }
+
             var startTs = XToTimestamp(vm, _dragStartX);
             var endTs = XToTimestamp(vm, point.X);
 
@@ -201,12 +214,79 @@ public partial class TimelineCanvasView : UserControl
         return vm.VisibleStart.Value.AddTicks((long)(fraction * totalTicks));
     }
 
-    private static SolidColorBrush GetLevelBrush(string? level) => level?.ToUpperInvariant() switch
+    private bool IsPointInSelection(TimelineViewModel vm, double x)
     {
-        "INFO" => InfoBrush,
-        "WARN" or "WARNING" => WarnBrush,
-        "ERROR" or "ERR" or "FATAL" or "CRITICAL" => ErrorBrush,
-        "DEBUG" or "DBG" or "TRACE" => DebugBrush,
-        _ => DefaultBrush
-    };
+        if (!vm.HasSelection)
+            return false;
+
+        var timestamp = XToTimestamp(vm, x);
+        return timestamp.HasValue
+            && timestamp.Value >= vm.SelectedStart!.Value
+            && timestamp.Value <= vm.SelectedEnd!.Value;
+    }
+
+    private bool TryGetBinAtPoint(TimelineViewModel vm, Point point, out TimelineBin selectedBin)
+    {
+        selectedBin = default!;
+
+        if (vm.Bins.Length == 0 || vm.VisibleStart is null || vm.VisibleEnd is null)
+            return false;
+
+        var maxCount = vm.Bins.Max(bin => bin.Count);
+        if (maxCount <= 0 || TimelineCanvas.Bounds.Width <= 0 || TimelineCanvas.Bounds.Height <= 0)
+            return false;
+
+        var visibleStart = vm.VisibleStart.Value;
+        var visibleEnd = vm.VisibleEnd.Value;
+        var totalTicks = (visibleEnd - visibleStart).Ticks;
+        if (totalTicks <= 0)
+            return false;
+
+        var canvasWidth = TimelineCanvas.Bounds.Width;
+        var canvasHeight = Math.Max(0, TimelineCanvas.Bounds.Height - 4);
+        foreach (var bin in vm.Bins)
+        {
+            if (bin.Count <= 0 || bin.End <= visibleStart || bin.Start >= visibleEnd)
+                continue;
+
+            var x = (bin.Start - visibleStart).Ticks / (double)totalTicks * canvasWidth;
+            var width = (bin.End - bin.Start).Ticks / (double)totalTicks * canvasWidth;
+            if (width < 1)
+                width = 1;
+
+            var height = bin.Count / (double)maxCount * canvasHeight;
+            var y = canvasHeight - height;
+            var rect = new Rect(x, y, width, height);
+            if (rect.Contains(point))
+            {
+                selectedBin = bin;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static (DateTimeOffset Start, DateTimeOffset End) ClampSelectionToSession(
+        TimelineViewModel vm,
+        DateTimeOffset start,
+        DateTimeOffset end)
+    {
+        var span = end - start;
+
+        if (vm.SessionStart.HasValue && start < vm.SessionStart.Value)
+        {
+            start = vm.SessionStart.Value;
+            end = start + span;
+        }
+
+        if (vm.SessionEnd.HasValue && end > vm.SessionEnd.Value)
+        {
+            end = vm.SessionEnd.Value;
+            start = end - span;
+        }
+
+        return (start, end);
+    }
+
 }

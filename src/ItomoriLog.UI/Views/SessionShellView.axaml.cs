@@ -9,6 +9,8 @@ namespace ItomoriLog.UI.Views;
 
 public partial class SessionShellView : UserControl
 {
+    private SessionShellViewModel? _boundSession;
+
     public SessionShellView()
     {
         InitializeComponent();
@@ -17,9 +19,25 @@ public partial class SessionShellView : UserControl
         AddHandler(DragDrop.DropEvent, OnDrop);
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         DragDrop.SetAllowDrop(this, true);
+        DataContextChanged += OnDataContextChanged;
     }
 
     public async void OpenFilePicker()
+    {
+        await PickAndStageFilesAsync();
+    }
+
+    private void OnDataContextChanged(object? sender, EventArgs e)
+    {
+        if (_boundSession is not null)
+            _boundSession.OpenFilePickerRequested -= OnOpenFilePickerRequested;
+
+        _boundSession = DataContext as SessionShellViewModel;
+        if (_boundSession is not null)
+            _boundSession.OpenFilePickerRequested += OnOpenFilePickerRequested;
+    }
+
+    private async void OnOpenFilePickerRequested()
     {
         await PickAndStageFilesAsync();
     }
@@ -80,7 +98,7 @@ public partial class SessionShellView : UserControl
 
     private void OnDragOver(object? sender, DragEventArgs e)
     {
-        if (e.Data.Contains(DataFormats.Files))
+        if (e.DataTransfer.Contains(DataFormat.File))
             e.DragEffects = DragDropEffects.Copy;
         else
             e.DragEffects = DragDropEffects.None;
@@ -89,10 +107,10 @@ public partial class SessionShellView : UserControl
 
     private void OnDrop(object? sender, DragEventArgs e)
     {
-        if (!e.Data.Contains(DataFormats.Files))
+        if (!e.DataTransfer.Contains(DataFormat.File))
             return;
 
-        var files = e.Data.GetFiles();
+        var files = e.DataTransfer.TryGetFiles();
         if (files is null || DataContext is not SessionShellViewModel vm)
             return;
 

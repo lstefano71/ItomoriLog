@@ -23,7 +23,7 @@ public class CommandPaletteViewModel : ViewModelBase
         FilteredCommands = new ObservableCollection<PaletteCommand>(_allCommands);
 
         ExecuteSelectedCommand = ReactiveCommand.Create(ExecuteSelected);
-        DismissCommand = ReactiveCommand.Create(() => { IsOpen = false; });
+        DismissCommand = ReactiveCommand.Create(Close);
 
         this.WhenAnyValue(x => x.SearchText)
             .Subscribe(_ => ApplyFilter());
@@ -52,17 +52,46 @@ public class CommandPaletteViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> ExecuteSelectedCommand { get; }
     public ReactiveCommand<Unit, Unit> DismissCommand { get; }
 
+    public void Open()
+    {
+        SearchText = "";
+        ApplyFilter();
+        IsOpen = true;
+    }
+
+    public void Close()
+    {
+        IsOpen = false;
+    }
+
     public void Toggle()
     {
         if (IsOpen)
         {
-            IsOpen = false;
+            Close();
         }
         else
         {
-            SearchText = "";
-            IsOpen = true;
+            Open();
         }
+    }
+
+    public void MoveSelectionBy(int delta)
+    {
+        if (FilteredCommands.Count == 0)
+        {
+            SelectedCommand = null;
+            return;
+        }
+
+        var currentIndex = SelectedCommand is not null
+            ? FilteredCommands.IndexOf(SelectedCommand)
+            : delta < 0
+                ? FilteredCommands.Count
+                : -1;
+
+        var newIndex = Math.Clamp(currentIndex + delta, 0, FilteredCommands.Count - 1);
+        SelectedCommand = FilteredCommands[newIndex];
     }
 
     private void ApplyFilter()
@@ -81,7 +110,7 @@ public class CommandPaletteViewModel : ViewModelBase
     private void ExecuteSelected()
     {
         if (SelectedCommand is null) return;
-        IsOpen = false;
+        Close();
         SelectedCommand.Action();
     }
 

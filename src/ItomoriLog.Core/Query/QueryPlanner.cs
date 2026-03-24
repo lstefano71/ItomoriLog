@@ -115,6 +115,8 @@ public sealed class QueryPlanner
         {
             var ctx = tickContext ?? new TickContext(DateTimeOffset.UtcNow);
             var tickResult = _tickCompiler.Compile(filter.TickExpression, ctx);
+            if (!string.IsNullOrWhiteSpace(tickResult.Warning))
+                throw new InvalidOperationException(tickResult.Warning);
             var emission = _tickEmitter.Emit(tickResult.Intervals);
 
             // Rebase emission parameter indices to account for existing parameters

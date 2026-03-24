@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Reactive;
 using System.Reactive.Linq;
 using ReactiveUI;
@@ -36,6 +37,18 @@ public class TimelineViewModel : ViewModelBase
 
         LoadCoarseCommand = ReactiveCommand.CreateFromTask(LoadCoarseBinsAsync);
         RefineCommand = ReactiveCommand.CreateFromTask(RefineVisibleAsync);
+        ZoomInCommand = ReactiveCommand.CreateFromTask(async () =>
+        {
+            Zoom(1.5);
+            await RefineVisibleAsync();
+        });
+        ZoomOutCommand = ReactiveCommand.CreateFromTask(async () =>
+        {
+            Zoom(1.0 / 1.5);
+            await RefineVisibleAsync();
+        });
+        ResetViewCommand = ReactiveCommand.CreateFromTask(ResetViewAsync);
+        ClearSelectionCommand = ReactiveCommand.Create(ClearSelectionAndNotify);
     }
 
     // --- Properties ---
@@ -43,7 +56,11 @@ public class TimelineViewModel : ViewModelBase
     public TimelineBin[] Bins
     {
         get => _bins;
-        set => this.RaiseAndSetIfChanged(ref _bins, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _bins, value);
+            RaiseAxisProperties();
+        }
     }
 
     public DateTimeOffset? SessionStart
@@ -61,25 +78,41 @@ public class TimelineViewModel : ViewModelBase
     public DateTimeOffset? VisibleStart
     {
         get => _visibleStart;
-        set => this.RaiseAndSetIfChanged(ref _visibleStart, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _visibleStart, value);
+            RaiseAxisProperties();
+        }
     }
 
     public DateTimeOffset? VisibleEnd
     {
         get => _visibleEnd;
-        set => this.RaiseAndSetIfChanged(ref _visibleEnd, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _visibleEnd, value);
+            RaiseAxisProperties();
+        }
     }
 
     public DateTimeOffset? SelectedStart
     {
         get => _selectedStart;
-        set => this.RaiseAndSetIfChanged(ref _selectedStart, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _selectedStart, value);
+            RaiseSelectionStateProperties();
+        }
     }
 
     public DateTimeOffset? SelectedEnd
     {
         get => _selectedEnd;
-        set => this.RaiseAndSetIfChanged(ref _selectedEnd, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _selectedEnd, value);
+            RaiseSelectionStateProperties();
+        }
     }
 
     public TimeSpan CurrentBinWidth
@@ -94,15 +127,42 @@ public class TimelineViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _isLoading, value);
     }
 
+    public bool HasSelection => SelectedStart.HasValue && SelectedEnd.HasValue;
+
+    public long MaxBinCount => Bins.Length == 0 ? 0 : Bins.Max(bin => bin.Count);
+
+    public string YAxisTopLabel => MaxBinCount.ToString("N0", CultureInfo.InvariantCulture);
+
+    public string YAxisMidLabel => (MaxBinCount / 2).ToString("N0", CultureInfo.InvariantCulture);
+
+    public string VisibleStartLabel => FormatAxisTimestamp(VisibleStart);
+
+    public string VisibleMidLabel =>
+        VisibleStart.HasValue && VisibleEnd.HasValue
+            ? FormatAxisTimestamp(VisibleStart.Value + TimeSpan.FromTicks((VisibleEnd.Value - VisibleStart.Value).Ticks / 2))
+            : string.Empty;
+
+    public string VisibleEndLabel => FormatAxisTimestamp(VisibleEnd);
+
+    public string SelectionDisplay =>
+        HasSelection
+            ? $"{SelectedStart:yyyy-MM-dd HH:mm:ss} - {SelectedEnd:yyyy-MM-dd HH:mm:ss}"
+            : string.Empty;
+
     // --- Commands ---
 
     public ReactiveCommand<Unit, Unit> LoadCoarseCommand { get; }
     public ReactiveCommand<Unit, Unit> RefineCommand { get; }
+    public ReactiveCommand<Unit, Unit> ZoomInCommand { get; }
+    public ReactiveCommand<Unit, Unit> ZoomOutCommand { get; }
+    public ReactiveCommand<Unit, Unit> ResetViewCommand { get; }
+    public ReactiveCommand<Unit, Unit> ClearSelectionCommand { get; }
 
     /// <summary>
     /// Raised when the user selects a time range on the timeline.
     /// </summary>
     public event Action<DateTimeOffset, DateTimeOffset>? TimeRangeSelected;
+    public event Action? TimeRangeCleared;
 
     // --- Methods ---
 
@@ -119,6 +179,7 @@ public class TimelineViewModel : ViewModelBase
             if (range is null)
             {
                 Bins = [];
+                ClearSelection();
                 return;
             }
 
@@ -235,6 +296,45 @@ public class TimelineViewModel : ViewModelBase
         TimeRangeSelected?.Invoke(start, end);
     }
 
+    public bool TrySelectBinContaining(DateTimeOffset timestamp)
+    {
+        var selectedBin = Bins.FirstOrDefault(bin => timestamp >= bin.Start && timestamp < bin.End);
+        if (selectedBin is null && Bins.Length > 0 && timestamp == Bins[^1].End)
+            selectedBin = Bins[^1];
+
+        if (selectedBin is null)
+            return false;
+
+        if (selectedBin.Count <= 0)
+            return false;
+
+        SelectTimeRange(selectedBin.Start, selectedBin.End);
+        return true;
+    }
+
+    public void ClearSelection()
+    {
+        ClearSelection(notifyListeners: false);
+    }
+
+    public void ClearSelection(bool notifyListeners)
+    {
+        SelectedStart = null;
+        SelectedEnd = null;
+        if (notifyListeners)
+            TimeRangeCleared?.Invoke();
+    }
+
+    public async Task ResetViewAsync()
+    {
+        if (SessionStart is null || SessionEnd is null)
+            return;
+
+        VisibleStart = SessionStart;
+        VisibleEnd = SessionEnd;
+        await LoadCoarseBinsAsync();
+    }
+
     private CancellationToken ResetCancellation()
     {
         lock (_ctsLock)
@@ -244,5 +344,38 @@ public class TimelineViewModel : ViewModelBase
             _pendingCts = new CancellationTokenSource();
             return _pendingCts.Token;
         }
+    }
+
+    private void ClearSelectionAndNotify() => ClearSelection(notifyListeners: true);
+
+    private void RaiseSelectionStateProperties()
+    {
+        this.RaisePropertyChanged(nameof(HasSelection));
+        this.RaisePropertyChanged(nameof(SelectionDisplay));
+    }
+
+    private void RaiseAxisProperties()
+    {
+        this.RaisePropertyChanged(nameof(MaxBinCount));
+        this.RaisePropertyChanged(nameof(YAxisTopLabel));
+        this.RaisePropertyChanged(nameof(YAxisMidLabel));
+        this.RaisePropertyChanged(nameof(VisibleStartLabel));
+        this.RaisePropertyChanged(nameof(VisibleMidLabel));
+        this.RaisePropertyChanged(nameof(VisibleEndLabel));
+    }
+
+    private string FormatAxisTimestamp(DateTimeOffset? timestamp)
+    {
+        if (!timestamp.HasValue || !VisibleStart.HasValue || !VisibleEnd.HasValue)
+            return string.Empty;
+
+        var visibleSpan = VisibleEnd.Value - VisibleStart.Value;
+        return visibleSpan switch
+        {
+            _ when visibleSpan <= TimeSpan.FromHours(6) => timestamp.Value.ToString("HH:mm:ss"),
+            _ when visibleSpan <= TimeSpan.FromDays(2) => timestamp.Value.ToString("MM-dd HH:mm"),
+            _ when visibleSpan <= TimeSpan.FromDays(45) => timestamp.Value.ToString("MM-dd"),
+            _ => timestamp.Value.ToString("yyyy-MM-dd")
+        };
     }
 }

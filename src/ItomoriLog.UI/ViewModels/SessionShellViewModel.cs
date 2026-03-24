@@ -1,52 +1,55 @@
+using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Reactive;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
-using System.ComponentModel;
-using ReactiveUI;
-using ItomoriLog.Core.Model;
-using ItomoriLog.Core.Storage;
-using ItomoriLog.Core.Ingest;
-using ItomoriLog.Core.Export;
-using ItomoriLog.Core.Query;
-using System.Collections.ObjectModel;
+using System.Text;
+using System.Text.Json;
 using DuckDB.NET.Data;
+using ReactiveUI;
+using ItomoriLog.Core.Export;
+using ItomoriLog.Core.Ingest;
+using ItomoriLog.Core.Model;
+using ItomoriLog.Core.Query;
+using ItomoriLog.Core.Storage;
 
 namespace ItomoriLog.UI.ViewModels;
 
 public class SessionShellViewModel : ViewModelBase
 {
+    private static readonly TimeSpan MinStableRateWindow = TimeSpan.FromSeconds(1);
+
     private readonly MainWindowViewModel _main;
     private readonly string _sessionFolder;
+    private readonly DetectionEngine _detectionEngine = new();
+    private readonly SemaphoreSlim _sniffConcurrency = new(4, 4);
+    private readonly HashSet<string> _activeIngestPaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Dictionary<string, IngestProgressUpdate>> _archiveEntryProgress = new(StringComparer.OrdinalIgnoreCase);
+
     private string _title = "";
     private string _description = "";
     private string _defaultTimezone = "";
-    private string _statusText = "Ready";
+    private string _statusText = "Opening session...";
     private long _recordCount;
     private bool _isIngesting;
+    private bool _isEditingHeader;
+    private string _editableTitle = "";
+    private string _editableDescription = "";
+    private string _editableTimezone = "";
+    private ExistingFileAction _existingFileAction = ExistingFileAction.Skip;
+    private double _overallRecordsPerSecond;
+    private double? _overallEtaSeconds;
+    private long _overallBytesProcessed;
+    private long _overallBytesTotal;
+    private DateTimeOffset? _overallProgressStartedUtc;
     private LogsPageViewModel? _logsPage;
     private TimelineViewModel? _timeline;
     private FacetPanelViewModel? _facetPanel;
     private CrashRecoveryViewModel? _crashRecovery;
     private CrashRecoveryService? _crashRecoveryService;
-    private ExistingFileAction _existingFileAction = ExistingFileAction.Skip;
-    private bool _isEditingHeader;
-    private string _editableTitle = "";
-    private string _editableDescription = "";
-    private string _editableTimezone = "";
-    private double _overallRecordsPerSecond;
-    private double? _overallEtaSeconds;
-    private long _overallBytesProcessed;
-    private long _overallBytesTotal;
-    private DateTimeOffset? _lastOverallUpdateUtc;
-    private long _lastOverallRecords;
-    private readonly DetectionEngine _detectionEngine = new();
-    private readonly SemaphoreSlim _sniffConcurrency = new(4, 4);
-
-    /// <summary>
-    /// When detection confidence is at or above this threshold, auto-ingest proceeds
-    /// without user confirmation. Default: 0.95.
-    /// </summary>
-    public double AutoIngestConfidenceThreshold { get; set; } = 0.95;
+    private bool _isStagingPaneOpen = true;
+    private StagedSourceItemViewModel? _selectedStagedSource;
+    private bool _recoveryBannerDismissed;
 
     public SessionShellViewModel(MainWindowViewModel main, string sessionFolder)
     {
@@ -58,21 +61,27 @@ public class SessionShellViewModel : ViewModelBase
             ReleaseSessionLock();
             _main.NavigateToWelcome();
         });
-        StageFilesCommand = ReactiveCommand.Create<IReadOnlyList<string>>(StagePaths);
+        ToggleStagingPaneCommand = ReactiveCommand.Create(ToggleStagingPane);
+        StageFilesCommand = ReactiveCommand.CreateFromTask<IReadOnlyList<string>>(StagePathsAsync);
         RemoveStagedSourceCommand = ReactiveCommand.Create<StagedSourceItemViewModel>(RemoveStagedSource);
         ClearStagedSourcesCommand = ReactiveCommand.Create(ClearStagedSources);
         StartIngestionCommand = ReactiveCommand.CreateFromTask(StartIngestionAsync);
-        ConfirmDetectionCommand = ReactiveCommand.Create<StagedSourceItemViewModel>(ConfirmDetectionChoice);
         ReingestSourceCommand = ReactiveCommand.CreateFromTask<StagedSourceItemViewModel>(ReingestSourceAsync);
+        ConfirmDetectionCommand = ReactiveCommand.Create<StagedSourceItemViewModel>(ConfirmDetectionChoice);
         BeginHeaderEditCommand = ReactiveCommand.Create(BeginHeaderEdit);
         SaveHeaderCommand = ReactiveCommand.CreateFromTask(SaveHeaderAsync);
         CancelHeaderEditCommand = ReactiveCommand.Create(CancelHeaderEdit);
         IngestFilesCommand = ReactiveCommand.CreateFromTask<IReadOnlyList<string>>(IngestFilesAsync);
         StagedSources = [];
 
-        // Load session header
-        Observable.StartAsync(LoadHeaderAsync).Subscribe();
+        Observable.FromAsync(LoadHeaderAsync).Subscribe();
     }
+
+    /// <summary>
+    /// When detection confidence is at or above this threshold, auto-ingest proceeds
+    /// without user confirmation.
+    /// </summary>
+    public double AutoIngestConfidenceThreshold { get; set; } = 0.95;
 
     public string Title
     {
@@ -89,7 +98,12 @@ public class SessionShellViewModel : ViewModelBase
     public string DefaultTimezone
     {
         get => _defaultTimezone;
-        set => this.RaiseAndSetIfChanged(ref _defaultTimezone, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _defaultTimezone, value);
+            this.RaisePropertyChanged(nameof(SessionTimezoneSummary));
+            LogsPage?.SetDisplayTimezone(SessionDefaults.ResolveDefaultTimezone(value));
+        }
     }
 
     public string SessionFolder => _sessionFolder;
@@ -112,8 +126,7 @@ public class SessionShellViewModel : ViewModelBase
         set
         {
             this.RaiseAndSetIfChanged(ref _isIngesting, value);
-            this.RaisePropertyChanged(nameof(CanStartIngestion));
-            this.RaisePropertyChanged(nameof(CanModifyStagedSources));
+            RaiseStagingStateProperties();
         }
     }
 
@@ -182,16 +195,54 @@ public class SessionShellViewModel : ViewModelBase
         OverallRecordsPerSecond > 0 ? $"{OverallRecordsPerSecond:N1} rec/s" : "-";
 
     public string OverallEtaDisplay =>
-        OverallEtaSeconds.HasValue && OverallEtaSeconds.Value > 0 ? TimeSpan.FromSeconds(OverallEtaSeconds.Value).ToString(@"hh\:mm\:ss") : "-";
+        OverallEtaSeconds.HasValue && OverallEtaSeconds.Value > 0
+            ? TimeSpan.FromSeconds(OverallEtaSeconds.Value).ToString(@"hh\:mm\:ss")
+            : "-";
 
     public bool HasPendingDetectionReview => StagedSources.Any(s => s.RequiresDetectionReview);
     public bool HasSniffingInProgress => StagedSources.Any(s => s.IsSniffing);
-    public bool CanStartIngestion =>
-        !IsIngesting
-        && StagedSources.Count > 0
-        && !HasPendingDetectionReview
-        && !HasSniffingInProgress;
-    public bool CanModifyStagedSources => true;
+    public bool HasStagedSources => StagedSources.Count > 0;
+    public bool HasRunnableStagedSources => StagedSources.Any(s => s.Phase != nameof(IngestFilePhase.Completed));
+    public bool CanStartIngestion => !IsIngesting && HasRunnableStagedSources && !HasPendingDetectionReview && !HasSniffingInProgress;
+    public bool CanModifyStagedSources => !IsIngesting;
+    public bool HasSelectedStagedSource => SelectedStagedSource is not null;
+    public bool CanConfirmSelectedDetection => SelectedStagedSource?.RequiresDetectionReview == true && !IsIngesting;
+    public bool CanRemoveSelectedStagedSource => SelectedStagedSource?.CanEdit == true && !IsIngesting;
+    public bool CanReingestSelectedSource => SelectedStagedSource?.CanReingest == true && !IsIngesting;
+
+    public string SessionTimezoneSummary => DescribeSessionTimezone();
+
+    public string StagingSummary
+    {
+        get
+        {
+            if (StagedSources.Count == 0)
+                return "No staged files.";
+
+            var parts = new List<string> { $"{StagedSources.Count} file(s)" };
+
+            var reviewCount = StagedSources.Count(s => s.RequiresDetectionReview);
+            if (reviewCount > 0)
+                parts.Add($"{reviewCount} need review");
+
+            var sniffingCount = StagedSources.Count(s => s.IsSniffing);
+            if (sniffingCount > 0)
+                parts.Add($"{sniffingCount} sniffing");
+
+            var completedCount = StagedSources.Count(s => s.Phase == nameof(IngestFilePhase.Completed));
+            if (completedCount > 0)
+                parts.Add($"{completedCount} completed");
+
+            return string.Join(" · ", parts);
+        }
+    }
+
+    public string StagingPaneToggleText =>
+        IsStagingPaneOpen
+            ? "Hide queue"
+            : HasStagedSources
+                ? $"Show queue ({StagedSources.Count})"
+                : "Show queue";
 
     public LogsPageViewModel? LogsPage
     {
@@ -217,7 +268,31 @@ public class SessionShellViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _crashRecovery, value);
     }
 
+    public bool IsStagingPaneOpen
+    {
+        get => _isStagingPaneOpen;
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _isStagingPaneOpen, value);
+            this.RaisePropertyChanged(nameof(StagingPaneToggleText));
+        }
+    }
+
+    public StagedSourceItemViewModel? SelectedStagedSource
+    {
+        get => _selectedStagedSource;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _selectedStagedSource, value);
+            this.RaisePropertyChanged(nameof(HasSelectedStagedSource));
+            this.RaisePropertyChanged(nameof(CanConfirmSelectedDetection));
+            this.RaisePropertyChanged(nameof(CanRemoveSelectedStagedSource));
+            this.RaisePropertyChanged(nameof(CanReingestSelectedSource));
+        }
+    }
+
     public ReactiveCommand<Unit, Unit> CloseSessionCommand { get; }
+    public ReactiveCommand<Unit, Unit> ToggleStagingPaneCommand { get; }
     public ReactiveCommand<IReadOnlyList<string>, Unit> StageFilesCommand { get; }
     public ReactiveCommand<StagedSourceItemViewModel, Unit> RemoveStagedSourceCommand { get; }
     public ReactiveCommand<Unit, Unit> ClearStagedSourcesCommand { get; }
@@ -229,437 +304,17 @@ public class SessionShellViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> CancelHeaderEditCommand { get; }
     public ReactiveCommand<IReadOnlyList<string>, Unit> IngestFilesCommand { get; }
 
-    private async Task LoadHeaderAsync()
-    {
-        var dbPath = SessionPaths.GetDbPath(_sessionFolder);
-        using var factory = new DuckLakeConnectionFactory(dbPath);
-        _crashRecoveryService = new CrashRecoveryService(_sessionFolder);
-        var store = new SessionStore(factory);
-        var header = await store.ReadHeaderAsync();
-        if (header is not null)
-        {
-            Title = header.Title;
-            Description = header.Description ?? "";
-            DefaultTimezone = SessionDefaults.ResolveDefaultTimezone(header.DefaultTimezone);
-            EditableTitle = Title;
-            EditableDescription = Description;
-            EditableTimezone = DefaultTimezone;
-        }
+    public event Action? OpenFilePickerRequested;
 
-        // Count records
-        var conn = await factory.GetConnectionAsync();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT COUNT(*) FROM logs";
-        try
-        {
-            var count = await cmd.ExecuteScalarAsync();
-            RecordCount = Convert.ToInt64(count);
-        }
-        catch { RecordCount = 0; }
+    public void OpenStagingPane() => IsStagingPaneOpen = true;
 
-        var recoveryStatus = await _crashRecoveryService.CheckAsync(conn);
-        _crashRecoveryService.AcquireLock();
-        CrashRecovery = new CrashRecoveryViewModel(
-            recoveryStatus,
-            onResume: () =>
-            {
-                _ = Task.Run(async () =>
-                {
-                    await _crashRecoveryService.MarkRunsAbandonedAsync(conn);
-                    _crashRecoveryService.AcquireLock();
-                });
-            },
-            onDismiss: () => { });
-
-        StatusText = $"{RecordCount:N0} records | {_sessionFolder}";
-
-        // Initialize child VMs with a persistent connection factory
-        var logsFactory = new DuckLakeConnectionFactory(dbPath);
-        var logsConn = await logsFactory.GetConnectionAsync();
-        await SchemaInitializer.EnsureSchemaAsync(logsConn);
-
-        LogsPage = new LogsPageViewModel(logsFactory, DefaultTimezone);
-        Timeline = new TimelineViewModel(logsFactory);
-        FacetPanel = new FacetPanelViewModel(logsFactory);
-
-        WireChildViewModels();
-
-        // Load initial timeline and facets
-        await Timeline.LoadCoarseBinsAsync();
-        await FacetPanel.RefreshAsync();
-        RaiseIngestionReadinessProperties();
-    }
-
-    private void WireChildViewModels()
-    {
-        if (Timeline is null || FacetPanel is null || LogsPage is null) return;
-
-        // Timeline selection → FilterState time window on LogsPage
-        Timeline.TimeRangeSelected += (start, end) =>
-        {
-            LogsPage.StartUtc = start;
-            LogsPage.EndUtc = end;
-            FacetPanel.UpdateTimeWindow(start, end);
-        };
-
-        // Facet selection changes → FilterState levels/sources on LogsPage
-        FacetPanel.SelectionChanged += (levels, excludedLevels, sources, excludedSources) =>
-        {
-            LogsPage.SelectedLevels = new System.Collections.ObjectModel.ObservableCollection<string>(levels);
-            LogsPage.ExcludedLevels = new System.Collections.ObjectModel.ObservableCollection<string>(excludedLevels);
-            LogsPage.SelectedSources = new System.Collections.ObjectModel.ObservableCollection<string>(sources);
-            LogsPage.ExcludedSources = new System.Collections.ObjectModel.ObservableCollection<string>(excludedSources);
-        };
-    }
-
-    private async Task IngestFilesAsync(IReadOnlyList<string> filePaths)
-    {
-        if (filePaths.Count == 0) return;
-        if (HasSniffingInProgress)
-        {
-            StatusText = "Please wait for detection sniffing to complete.";
-            return;
-        }
-        if (HasPendingDetectionReview)
-        {
-            StatusText = "Please review low-confidence format guesses before ingestion.";
-            return;
-        }
-
-        IsIngesting = true;
-        StatusText = $"Ingesting {filePaths.Count} staged source(s)...";
-        ResetPerItemProgress();
-        ResetOverallProgress();
-        this.RaisePropertyChanged(nameof(OverallProgressDisplay));
-        this.RaisePropertyChanged(nameof(OverallThroughputDisplay));
-        this.RaisePropertyChanged(nameof(OverallEtaDisplay));
-
-        try
-        {
-            var dbPath = SessionPaths.GetDbPath(_sessionFolder);
-            using var factory = new DuckLakeConnectionFactory(dbPath);
-            var conn = await factory.GetConnectionAsync();
-            await SchemaInitializer.EnsureSchemaAsync(conn);
-            var defaultTz = BuildDefaultTimeBasisConfig();
-
-            var planner = new FileIngestPlanner(conn);
-            var plan = await planner.PlanAsync(filePaths, ExistingFileAction, CancellationToken.None);
-
-            foreach (var skipped in plan.SkippedFiles)
-                StatusText = $"Skipped: {Path.GetFileName(skipped.SourcePath)} ({skipped.Reason})";
-
-            foreach (var segmentId in plan.SegmentsToReingest)
-            {
-                var reingest = new ReingestService(conn);
-                var reingestResult = await reingest.ReingestSegmentAsync(segmentId, defaultTz, CancellationToken.None);
-                if (!reingestResult.Success)
-                    StatusText = $"Re-ingest failed for segment {segmentId}: {reingestResult.Error}";
-            }
-
-            if (plan.FilesToIngest.Count == 0 && plan.SegmentsToReingest.Count > 0)
-            {
-                StatusText = $"{RecordCount:N0} records | Re-ingested {plan.SegmentsToReingest.Count} segment(s) | {_sessionFolder}";
-                if (Timeline is not null) await Timeline.LoadCoarseBinsAsync();
-                if (FacetPanel is not null) { FacetPanel.InvalidateCache(); await FacetPanel.RefreshAsync(); }
-                return;
-            }
-
-            if (plan.FilesToIngest.Count == 0)
-            {
-                StatusText = $"{RecordCount:N0} records | No new files to ingest | {_sessionFolder}";
-                return;
-            }
-
-            var overrides = BuildDetectionOverrides(plan.FilesToIngest);
-            var progress = new Progress<IngestProgressUpdate>(OnIngestProgress);
-            var orchestrator = new IngestOrchestrator(conn, detectionOverrides: overrides);
-            var result = await orchestrator.IngestFilesAsync(plan.FilesToIngest, defaultTz, progress);
-
-            RecordCount += result.TotalRows;
-            StatusText =
-                $"{RecordCount:N0} records | {result.FilesProcessed} files ingested, {plan.SegmentsToReingest.Count} segments re-ingested, {result.Skips.Count + plan.SkippedFiles.Count} skips | {_sessionFolder}";
-
-            using var globalStore = new GlobalStore();
-            await globalStore.AddRecentSessionAsync(_sessionFolder, Title, Description);
-
-            if (Timeline is not null) await Timeline.LoadCoarseBinsAsync();
-            if (FacetPanel is not null) { FacetPanel.InvalidateCache(); await FacetPanel.RefreshAsync(); }
-        }
-        catch (Exception ex)
-        {
-            StatusText = $"Ingest error: {ex.Message}";
-        }
-        finally
-        {
-            IsIngesting = false;
-            RaiseIngestionReadinessProperties();
-            this.RaisePropertyChanged(nameof(OverallProgressDisplay));
-            this.RaisePropertyChanged(nameof(OverallThroughputDisplay));
-            this.RaisePropertyChanged(nameof(OverallEtaDisplay));
-        }
-    }
-
-    private Dictionary<string, DetectionResult> BuildDetectionOverrides(IReadOnlyList<string> filePaths)
-    {
-        var result = new Dictionary<string, DetectionResult>(StringComparer.OrdinalIgnoreCase);
-        var byPath = StagedSources
-            .Where(s => !s.IsDirectory)
-            .ToDictionary(
-                s => Path.GetFullPath(s.SourcePath),
-                s => s,
-                StringComparer.OrdinalIgnoreCase);
-
-        foreach (var filePath in filePaths)
-        {
-            var canonical = Path.GetFullPath(filePath);
-            if (byPath.TryGetValue(canonical, out var item) &&
-                item.TryGetSelectedDetection(out var detection))
-            {
-                result[canonical] = detection;
-            }
-        }
-
-        return result;
-    }
-
-    private async Task ReingestSourceAsync(StagedSourceItemViewModel? item)
-    {
-        if (item is null || item.IsDirectory)
-            return;
-        if (IsIngesting)
-        {
-            StatusText = "Cannot re-ingest while ingestion is active.";
-            return;
-        }
-
-        var dbPath = SessionPaths.GetDbPath(_sessionFolder);
-        using var factory = new DuckLakeConnectionFactory(dbPath);
-        var conn = await factory.GetConnectionAsync();
-        await SchemaInitializer.EnsureSchemaAsync(conn);
-
-        var segmentIds = await ResolveSegmentsForSourceAsync(conn, item.SourcePath);
-        if (segmentIds.Count == 0)
-        {
-            StatusText = $"No ingested segments found for {Path.GetFileName(item.SourcePath)}.";
-            return;
-        }
-
-        var defaultTz = BuildDefaultTimeBasisConfig();
-        var service = new ReingestService(conn);
-        var overrideDetection = item.TryGetSelectedDetection(out var selectedDetection)
-            ? selectedDetection
-            : null;
-        var ok = 0;
-        var failed = 0;
-        long replacedRows = 0;
-
-        foreach (var segmentId in segmentIds)
-        {
-            var result = await service.ReingestSegmentAsync(
-                segmentId,
-                defaultTz,
-                CancellationToken.None,
-                overrideDetection: overrideDetection);
-            if (result.Success)
-            {
-                ok++;
-                replacedRows += result.NewRowCount;
-            }
-            else
-            {
-                failed++;
-                StatusText = $"Re-ingest failed for {Path.GetFileName(item.SourcePath)} segment {segmentId}: {result.Error}";
-            }
-        }
-
-        if (ok > 0)
-            RecordCount = await ReadRecordCountAsync(conn);
-
-        if (Timeline is not null) await Timeline.LoadCoarseBinsAsync();
-        if (FacetPanel is not null) { FacetPanel.InvalidateCache(); await FacetPanel.RefreshAsync(); }
-
-        StatusText = failed == 0
-            ? $"{RecordCount:N0} records | Re-ingested {ok} segment(s), {replacedRows:N0} rows refreshed | {_sessionFolder}"
-            : $"{RecordCount:N0} records | Re-ingest completed with {ok} success, {failed} failure | {_sessionFolder}";
-    }
-
-    private static async Task<long> ReadRecordCountAsync(DuckDBConnection conn)
-    {
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT COUNT(*) FROM logs";
-        var result = await cmd.ExecuteScalarAsync();
-        return Convert.ToInt64(result);
-    }
-
-    private static async Task<List<string>> ResolveSegmentsForSourceAsync(DuckDBConnection conn, string sourcePath)
-    {
-        var canonical = Path.GetFullPath(sourcePath);
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT segment_id
-            FROM segments
-            WHERE active = TRUE
-              AND (source_path = $1 OR source_path LIKE $2)
-            ORDER BY segment_id
-            """;
-        cmd.Parameters.Add(new DuckDBParameter { Value = canonical });
-        cmd.Parameters.Add(new DuckDBParameter { Value = $"{canonical}!%" });
-
-        var segmentIds = new List<string>();
-        using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
-            segmentIds.Add(reader.GetString(0));
-        return segmentIds;
-    }
-
-    private void StartBackgroundSniff(StagedSourceItemViewModel item)
-    {
-        if (item.IsDirectory)
-            return;
-
-        item.MarkSniffing();
-        RaiseIngestionReadinessProperties();
-
-        _ = Task.Run(async () =>
-        {
-            await _sniffConcurrency.WaitAsync();
-            try
-            {
-                await RunSniffAsync(item);
-            }
-            finally
-            {
-                _sniffConcurrency.Release();
-                RunOnUi(RaiseIngestionReadinessProperties);
-            }
-        });
-    }
-
-    private async Task RunSniffAsync(StagedSourceItemViewModel item)
-    {
-        var sourcePath = item.SourcePath;
-        if (!File.Exists(sourcePath))
-        {
-            RunOnUi(() => item.MarkDetectionFailed("File not found."));
-            return;
-        }
-
-        if (sourcePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-        {
-            RunOnUi(() =>
-                item.ApplyDetectionChoices([], needsReview: false, "ZIP archive; entry formats are detected during ingest."));
-            return;
-        }
-
-        try
-        {
-            await using var fs = File.OpenRead(sourcePath);
-            var buffer = new byte[Math.Min(fs.Length, 256 * 1024)];
-            var bytesRead = await fs.ReadAsync(buffer);
-            using var sniff = new MemoryStream();
-            if (bytesRead > 0)
-                sniff.Write(buffer, 0, bytesRead);
-            sniff.Position = 0;
-
-            var candidates = _detectionEngine.DetectCandidates(sniff, Path.GetFileName(sourcePath));
-            if (candidates.Count == 0)
-            {
-                RunOnUi(() => item.MarkDetectionFailed("No viable format candidates."));
-                return;
-            }
-
-            var ranked = candidates
-                .Select(c => new DetectionChoiceViewModel(
-                    FormatName: FormatBoundaryName(c.Boundary),
-                    Confidence: c.Confidence,
-                    Detection: c))
-                .OrderByDescending(c => c.Confidence)
-                .ToList();
-
-            var top = ranked[0];
-            var closeSecond = ranked.Count > 1 && Math.Abs(ranked[0].Confidence - ranked[1].Confidence) < 0.02;
-            var needsReview = top.Confidence < AutoIngestConfidenceThreshold || closeSecond;
-
-            RunOnUi(() =>
-                item.ApplyDetectionChoices(
-                    ranked,
-                    needsReview,
-                    needsReview
-                        ? $"Low confidence ({top.ConfidenceDisplay}) for {top.FormatName}. Select a format before ingesting."
-                        : $"Detected {top.FormatName} ({top.ConfidenceDisplay})."));
-        }
-        catch (Exception ex)
-        {
-            RunOnUi(() => item.MarkDetectionFailed(ex.Message));
-        }
-    }
-
-    private static string FormatBoundaryName(RecordBoundarySpec boundary) =>
-        boundary switch
-        {
-            CsvBoundary => "CSV",
-            JsonNdBoundary => "NDJSON",
-            TextSoRBoundary => "Text",
-            _ => boundary.GetType().Name.Replace("Boundary", "", StringComparison.Ordinal)
-        };
-
-    private static void RunOnUi(Action action)
-    {
-        RxApp.MainThreadScheduler.Schedule(Unit.Default, (_, _) =>
-        {
-            action();
-            return Disposable.Empty;
-        });
-    }
-
-    private void RaiseIngestionReadinessProperties()
-    {
-        this.RaisePropertyChanged(nameof(HasPendingDetectionReview));
-        this.RaisePropertyChanged(nameof(HasSniffingInProgress));
-        this.RaisePropertyChanged(nameof(CanStartIngestion));
-    }
-
-    private TimeBasisConfig BuildDefaultTimeBasisConfig()
-    {
-        var tz = SessionDefaults.ResolveDefaultTimezone(DefaultTimezone);
-        if (!SessionDefaults.IsValidTimezoneId(tz))
-            return new TimeBasisConfig(TimeBasis.Local);
-
-        if (string.Equals(tz, TimeZoneInfo.Local.Id, StringComparison.OrdinalIgnoreCase))
-            return new TimeBasisConfig(TimeBasis.Local);
-
-        if (string.Equals(tz, "UTC", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(tz, "Etc/UTC", StringComparison.OrdinalIgnoreCase))
-        {
-            return new TimeBasisConfig(TimeBasis.Utc);
-        }
-
-        return new TimeBasisConfig(TimeBasis.Zone, TimeZoneId: tz);
-    }
-
-    private void AttachStagedSource(StagedSourceItemViewModel item)
-    {
-        item.PropertyChanged += OnStagedSourcePropertyChanged;
-        StartBackgroundSniff(item);
-    }
-
-    private void DetachStagedSource(StagedSourceItemViewModel item) =>
-        item.PropertyChanged -= OnStagedSourcePropertyChanged;
-
-    private void OnStagedSourcePropertyChanged(object? sender, PropertyChangedEventArgs e)
-    {
-        if (e.PropertyName is nameof(StagedSourceItemViewModel.RequiresDetectionReview)
-            or nameof(StagedSourceItemViewModel.IsSniffing)
-            or nameof(StagedSourceItemViewModel.SelectedDetectionChoice))
-        {
-            RaiseIngestionReadinessProperties();
-        }
-    }
+    public void RequestOpenFilePicker() => OpenFilePickerRequested?.Invoke();
 
     public FilterState BuildCurrentFilterState()
     {
         if (LogsPage is null)
             return FilterState.Empty;
+
         return LogsPage.BuildCurrentFilterState();
     }
 
@@ -690,33 +345,1120 @@ public class SessionShellViewModel : ViewModelBase
 
     public void ReleaseSessionLock() => _crashRecoveryService?.ReleaseLock();
 
-    private void StagePaths(IReadOnlyList<string> paths)
+    private async Task LoadHeaderAsync()
     {
-        foreach (var path in paths.Where(p => !string.IsNullOrWhiteSpace(p)))
+        var dbPath = SessionPaths.GetDbPath(_sessionFolder);
+        using var bootstrapFactory = new DuckLakeConnectionFactory(dbPath);
+        var bootstrapConnection = await bootstrapFactory.GetConnectionAsync();
+        await SchemaInitializer.EnsureSchemaAsync(bootstrapConnection);
+
+        _crashRecoveryService = new CrashRecoveryService(_sessionFolder);
+
+        var store = new SessionStore(bootstrapFactory);
+        var header = await store.ReadHeaderAsync();
+        if (header is not null)
         {
-            var fullPath = Path.GetFullPath(path);
-            if (StagedSources.Any(s => string.Equals(s.SourcePath, fullPath, StringComparison.OrdinalIgnoreCase)))
-                continue;
-
-            var isDirectory = Directory.Exists(fullPath);
-            if (!isDirectory && !File.Exists(fullPath))
-                continue;
-
-            var item = new StagedSourceItemViewModel(fullPath, isDirectory);
-            StagedSources.Add(item);
-            AttachStagedSource(item);
+            Title = header.Title;
+            Description = header.Description ?? "";
+            DefaultTimezone = SessionDefaults.ResolveDefaultTimezone(header.DefaultTimezone);
+            EditableTitle = Title;
+            EditableDescription = Description;
+            EditableTimezone = DefaultTimezone;
+        }
+        else
+        {
+            DefaultTimezone = SessionDefaults.ResolveDefaultTimezone(null);
+            EditableTimezone = DefaultTimezone;
         }
 
-        RaiseIngestionReadinessProperties();
+        RecordCount = await ReadRecordCountAsync(bootstrapConnection);
+
+        var recoveryStatus = await _crashRecoveryService.CheckAsync(bootstrapConnection);
+        _crashRecoveryService.AcquireLock();
+        CrashRecovery = !_recoveryBannerDismissed && recoveryStatus.CanResume
+            ? new CrashRecoveryViewModel(
+                recoveryStatus,
+                onResume: ResumeInterruptedIngestionAsync,
+                onDismiss: DismissRecoveryBanner)
+            : new CrashRecoveryViewModel();
+
+        var logsFactory = new DuckLakeConnectionFactory(dbPath);
+        LogsPage = new LogsPageViewModel(logsFactory, DefaultTimezone);
+        Timeline = new TimelineViewModel(logsFactory);
+        FacetPanel = new FacetPanelViewModel(logsFactory);
+
+        WireChildViewModels();
+        IsStagingPaneOpen = RecordCount == 0;
+
+        await RefreshBrowseAsync(resetFilters: false, invalidateCache: true);
+        StatusText = BuildSessionStatus(RecordCount == 0 ? "Session ready for ingestion." : "Session loaded.");
+        RaiseStagingStateProperties();
+    }
+
+    private void WireChildViewModels()
+    {
+        if (Timeline is null || FacetPanel is null || LogsPage is null)
+            return;
+
+        Timeline.TimeRangeSelected += (start, end) =>
+        {
+            LogsPage.StartUtc = start;
+            LogsPage.EndUtc = end;
+            FacetPanel.UpdateTimeWindow(start, end);
+        };
+
+        Timeline.TimeRangeCleared += () =>
+        {
+            LogsPage.StartUtc = null;
+            LogsPage.EndUtc = null;
+            FacetPanel.UpdateTimeWindow(null, null);
+        };
+
+        FacetPanel.SelectionChanged += (levels, excludedLevels, sources, excludedSources) =>
+        {
+            LogsPage.SelectedLevels = new ObservableCollection<string>(levels);
+            LogsPage.ExcludedLevels = new ObservableCollection<string>(excludedLevels);
+            LogsPage.SelectedSources = new ObservableCollection<string>(sources);
+            LogsPage.ExcludedSources = new ObservableCollection<string>(excludedSources);
+        };
+    }
+
+    private async Task ResumeInterruptedIngestionAsync()
+    {
+        if (_crashRecoveryService is null)
+            return;
+
+        _recoveryBannerDismissed = true;
+        CrashRecovery = new CrashRecoveryViewModel();
+        StatusText = BuildSessionStatus("Recovering interrupted ingest...");
+
+        var dbPath = SessionPaths.GetDbPath(_sessionFolder);
+        using var factory = new DuckLakeConnectionFactory(dbPath);
+        var conn = await factory.GetConnectionAsync();
+        await SchemaInitializer.EnsureSchemaAsync(conn);
+
+        var resumablePaths = await _crashRecoveryService.RecoverInterruptedIngestionAsync(conn);
+        _crashRecoveryService.AcquireLock();
+
+        if (resumablePaths.Count == 0)
+        {
+            StatusText = BuildSessionStatus("Nothing resumable was found.");
+            return;
+        }
+
+        var stagedItems = StagePathsCore(resumablePaths, openPane: true, queueSniff: false);
+        foreach (var item in stagedItems)
+            item.MarkPendingResume(SessionTimezoneSummary);
+
+        await SniffStagedSourcesAsync(stagedItems);
+
+        if (stagedItems.Any(item => item.RequiresDetectionReview))
+        {
+            SelectedStagedSource = stagedItems.First(item => item.RequiresDetectionReview);
+            StatusText = BuildSessionStatus("Interrupted ingest recovered. Review low-confidence guesses before resuming.");
+            return;
+        }
+
+        StatusText = BuildSessionStatus($"Resuming interrupted ingest for {stagedItems.Count} file(s)...");
+        await IngestFilesAsync(stagedItems.Select(item => item.SourcePath).ToArray());
+    }
+
+    private async Task IngestFilesAsync(IReadOnlyList<string> filePaths)
+    {
+        if (filePaths.Count == 0)
+            return;
+
+        if (HasSniffingInProgress)
+        {
+            OpenStagingPane();
+            StatusText = BuildSessionStatus("Please wait for sniffing to finish.");
+            return;
+        }
+
+        if (HasPendingDetectionReview)
+        {
+            OpenStagingPane();
+            SelectedStagedSource = StagedSources.FirstOrDefault(s => s.RequiresDetectionReview) ?? SelectedStagedSource;
+            StatusText = BuildSessionStatus("Review low-confidence guesses before ingesting.");
+            return;
+        }
+
+        var requestedPaths = filePaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (requestedPaths.Length == 0)
+            return;
+
+        var wasEmptySession = RecordCount == 0;
+
+        IsIngesting = true;
+        _archiveEntryProgress.Clear();
+        _activeIngestPaths.Clear();
+        foreach (var path in requestedPaths)
+            _activeIngestPaths.Add(path);
+
+        ResetPerItemProgress(requestedPaths);
+        ResetOverallProgress();
+        StatusText = BuildSessionStatus($"Ingesting {requestedPaths.Length} staged source(s)...");
+
+        try
+        {
+            var dbPath = SessionPaths.GetDbPath(_sessionFolder);
+            using var factory = new DuckLakeConnectionFactory(dbPath);
+            var conn = await factory.GetConnectionAsync();
+            await SchemaInitializer.EnsureSchemaAsync(conn);
+
+            var defaultTz = BuildDefaultTimeBasisConfig();
+            var planner = new FileIngestPlanner(conn);
+            var plan = await planner.PlanAsync(requestedPaths, ExistingFileAction, CancellationToken.None);
+
+            var skippedPaths = new HashSet<string>(
+                plan.SkippedFiles.Select(skip => Path.GetFullPath(skip.SourcePath)),
+                StringComparer.OrdinalIgnoreCase);
+            var filesToIngest = new HashSet<string>(
+                plan.FilesToIngest.Select(Path.GetFullPath),
+                StringComparer.OrdinalIgnoreCase);
+            var reingestRequestedPaths = requestedPaths
+                .Where(path => !skippedPaths.Contains(path) && !filesToIngest.Contains(path))
+                .ToArray();
+
+            foreach (var skipped in plan.SkippedFiles)
+            {
+                if (TryFindStagedSource(skipped.SourcePath, out var skippedItem))
+                {
+                    skippedItem.ApplyProgress(
+                        phase: nameof(IngestFilePhase.Skipped),
+                        bytesProcessed: skippedItem.BytesProcessed,
+                        bytesTotal: skippedItem.BytesTotal,
+                        recordsProcessed: skippedItem.RecordsProcessed,
+                        message: skipped.Reason);
+                }
+            }
+
+            foreach (var reingestPath in reingestRequestedPaths)
+            {
+                if (TryFindStagedSource(reingestPath, out var reingestItem))
+                {
+                    reingestItem.ApplyProgress(
+                        phase: nameof(IngestFilePhase.Ingesting),
+                        bytesProcessed: 0,
+                        bytesTotal: 0,
+                        recordsProcessed: 0,
+                        message: "Re-ingesting existing segment...");
+                }
+            }
+
+            foreach (var segmentId in plan.SegmentsToReingest)
+            {
+                var reingest = new ReingestService(conn);
+                var reingestResult = await reingest.ReingestSegmentAsync(segmentId, defaultTz, CancellationToken.None);
+                if (!reingestResult.Success)
+                {
+                    StatusText = BuildSessionStatus($"Re-ingest failed for segment {segmentId}: {reingestResult.Error}");
+                }
+            }
+
+            foreach (var reingestPath in reingestRequestedPaths)
+            {
+                if (TryFindStagedSource(reingestPath, out var reingestItem))
+                {
+                    reingestItem.ApplyProgress(
+                        phase: nameof(IngestFilePhase.Completed),
+                        bytesProcessed: reingestItem.BytesProcessed,
+                        bytesTotal: reingestItem.BytesTotal,
+                        recordsProcessed: reingestItem.RecordsProcessed,
+                        message: "Re-ingested.");
+                }
+            }
+
+            if (plan.FilesToIngest.Count == 0 && plan.SegmentsToReingest.Count > 0)
+            {
+                RecordCount = await ReadRecordCountAsync(conn);
+                await RefreshBrowseAsync(resetFilters: wasEmptySession, invalidateCache: true);
+                AutoHideStagingPaneIfAllCompleted();
+                StatusText = BuildSessionStatus($"Re-ingested {plan.SegmentsToReingest.Count} segment(s).");
+                return;
+            }
+
+            if (plan.FilesToIngest.Count == 0)
+            {
+                StatusText = BuildSessionStatus("No new files needed ingestion.");
+                return;
+            }
+
+            var overrides = BuildDetectionOverrides(plan.FilesToIngest);
+            var progress = new Progress<IngestProgressUpdate>(OnIngestProgress);
+            var orchestrator = new IngestOrchestrator(conn, detectionOverrides: overrides);
+            var result = await orchestrator.IngestFilesAsync(plan.FilesToIngest, defaultTz, progress);
+
+            RecordCount = await ReadRecordCountAsync(conn);
+
+            if (result.Status == "completed")
+            {
+                foreach (var ingestedPath in plan.FilesToIngest)
+                {
+                    if (TryFindStagedSource(ingestedPath, out var ingestedItem))
+                    {
+                        ingestedItem.ApplyProgress(
+                            phase: nameof(IngestFilePhase.Completed),
+                            bytesProcessed: ingestedItem.BytesTotal > 0 ? ingestedItem.BytesTotal : ingestedItem.BytesProcessed,
+                            bytesTotal: ingestedItem.BytesTotal,
+                            recordsProcessed: ingestedItem.RecordsProcessed,
+                            message: "Completed");
+                    }
+                }
+            }
+
+            using var globalStore = new GlobalStore();
+            await globalStore.AddRecentSessionAsync(_sessionFolder, Title, Description);
+
+            await RefreshBrowseAsync(resetFilters: wasEmptySession && result.TotalRows > 0, invalidateCache: true);
+            AutoHideStagingPaneIfAllCompleted();
+
+            StatusText = result.Status == "completed"
+                ? BuildSessionStatus($"{result.FilesProcessed} file(s) ingested, {plan.SegmentsToReingest.Count} segment(s) re-ingested, {result.TotalRows:N0} rows added.")
+                : BuildSessionStatus("Ingest failed.");
+        }
+        catch (Exception ex)
+        {
+            StatusText = BuildSessionStatus($"Ingest error: {ex.Message}");
+        }
+        finally
+        {
+            _activeIngestPaths.Clear();
+            IsIngesting = false;
+            RaiseStagingStateProperties();
+            ResetOverallProgress();
+        }
+    }
+
+    private Dictionary<string, DetectionResult> BuildDetectionOverrides(IReadOnlyList<string> filePaths)
+    {
+        var result = new Dictionary<string, DetectionResult>(StringComparer.OrdinalIgnoreCase);
+        var byPath = StagedSources
+            .Where(s => !s.IsDirectory && !s.SourcePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(
+                s => Path.GetFullPath(s.SourcePath),
+                s => s,
+                StringComparer.OrdinalIgnoreCase);
+
+        foreach (var filePath in filePaths)
+        {
+            var canonical = Path.GetFullPath(filePath);
+            if (byPath.TryGetValue(canonical, out var item)
+                && item.TryGetSelectedDetection(out var detection))
+            {
+                result[canonical] = detection;
+            }
+        }
+
+        return result;
+    }
+
+    private async Task ReingestSourceAsync(StagedSourceItemViewModel? item)
+    {
+        if (item is null || item.IsDirectory)
+            return;
+
+        if (IsIngesting)
+        {
+            StatusText = BuildSessionStatus("Cannot re-ingest while ingestion is active.");
+            return;
+        }
+
+        IsIngesting = true;
+        item.ApplyProgress(
+            phase: nameof(IngestFilePhase.Ingesting),
+            bytesProcessed: 0,
+            bytesTotal: 0,
+            recordsProcessed: 0,
+            message: "Re-ingesting existing segments...");
+
+        try
+        {
+            var dbPath = SessionPaths.GetDbPath(_sessionFolder);
+            using var factory = new DuckLakeConnectionFactory(dbPath);
+            var conn = await factory.GetConnectionAsync();
+            await SchemaInitializer.EnsureSchemaAsync(conn);
+
+            var segmentIds = await ResolveSegmentsForSourceAsync(conn, item.SourcePath);
+            if (segmentIds.Count == 0)
+            {
+                item.ApplyProgress(
+                    phase: nameof(IngestFilePhase.Failed),
+                    bytesProcessed: 0,
+                    bytesTotal: 0,
+                    recordsProcessed: 0,
+                    message: "No ingested segments found.");
+                StatusText = BuildSessionStatus($"No ingested segments found for {Path.GetFileName(item.SourcePath)}.");
+                return;
+            }
+
+            var defaultTz = BuildDefaultTimeBasisConfig();
+            var service = new ReingestService(conn);
+            var overrideDetection = item.TryGetSelectedDetection(out var selectedDetection)
+                ? selectedDetection
+                : null;
+            var ok = 0;
+            var failed = 0;
+            long replacedRows = 0;
+
+            foreach (var segmentId in segmentIds)
+            {
+                var result = await service.ReingestSegmentAsync(
+                    segmentId,
+                    defaultTz,
+                    CancellationToken.None,
+                    overrideDetection: overrideDetection);
+                if (result.Success)
+                {
+                    ok++;
+                    replacedRows += result.NewRowCount;
+                }
+                else
+                {
+                    failed++;
+                    StatusText = BuildSessionStatus($"Re-ingest failed for segment {segmentId}: {result.Error}");
+                }
+            }
+
+            RecordCount = await ReadRecordCountAsync(conn);
+            await RefreshBrowseAsync(resetFilters: false, invalidateCache: true);
+
+            item.ApplyProgress(
+                phase: failed == 0 ? nameof(IngestFilePhase.Completed) : nameof(IngestFilePhase.Failed),
+                bytesProcessed: item.BytesProcessed,
+                bytesTotal: item.BytesTotal,
+                recordsProcessed: replacedRows,
+                message: failed == 0 ? "Re-ingested." : "Re-ingest completed with failures.");
+
+            StatusText = failed == 0
+                ? BuildSessionStatus($"Re-ingested {ok} segment(s), refreshing {replacedRows:N0} rows.")
+                : BuildSessionStatus($"Re-ingest finished with {ok} success and {failed} failure.");
+        }
+        finally
+        {
+            IsIngesting = false;
+        }
+    }
+
+    private static async Task<long> ReadRecordCountAsync(DuckDBConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM logs";
+        var result = await cmd.ExecuteScalarAsync();
+        return Convert.ToInt64(result);
+    }
+
+    private static async Task<List<string>> ResolveSegmentsForSourceAsync(DuckDBConnection conn, string sourcePath)
+    {
+        var canonical = Path.GetFullPath(sourcePath);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT segment_id
+            FROM segments
+            WHERE active = TRUE
+              AND (source_path = $1 OR source_path LIKE $2)
+            ORDER BY segment_id
+            """;
+        cmd.Parameters.Add(new DuckDBParameter { Value = canonical });
+        cmd.Parameters.Add(new DuckDBParameter { Value = $"{canonical}!%" });
+
+        var segmentIds = new List<string>();
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            segmentIds.Add(reader.GetString(0));
+
+        return segmentIds;
+    }
+
+    private void QueueSniff(IReadOnlyList<StagedSourceItemViewModel> items)
+    {
+        foreach (var item in items.Where(item => !item.IsDirectory))
+        {
+            item.MarkSniffing();
+            _ = Task.Run(async () => await SniffItemWithGateAsync(item));
+        }
+
+        RaiseStagingStateProperties();
+    }
+
+    private Task SniffStagedSourcesAsync(IReadOnlyList<StagedSourceItemViewModel> items)
+    {
+        var sniffable = items.Where(item => !item.IsDirectory).ToArray();
+        foreach (var item in sniffable)
+            item.MarkSniffing();
+
+        RaiseStagingStateProperties();
+        return Task.WhenAll(sniffable.Select(SniffItemWithGateAsync));
+    }
+
+    private async Task SniffItemWithGateAsync(StagedSourceItemViewModel item)
+    {
+        await _sniffConcurrency.WaitAsync();
+        try
+        {
+            await RunSniffAsync(item);
+        }
+        finally
+        {
+            _sniffConcurrency.Release();
+            RunOnUi(RaiseStagingStateProperties);
+        }
+    }
+
+    private async Task RunSniffAsync(StagedSourceItemViewModel item)
+    {
+        var sourcePath = item.SourcePath;
+        if (!File.Exists(sourcePath))
+        {
+            RunOnUi(() => item.MarkDetectionFailed("File not found."));
+            return;
+        }
+
+        try
+        {
+            var isArchive = sourcePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
+            var ranked = isArchive
+                ? await BuildArchivePreviewChoicesAsync(sourcePath)
+                : await BuildRankedDetectionChoicesAsync(File.OpenRead(sourcePath), Path.GetFileName(sourcePath));
+
+            if (ranked.Count == 0)
+            {
+                RunOnUi(() => item.MarkDetectionFailed(
+                    isArchive
+                        ? "Archive contains no sniffable log entries."
+                        : "No viable format candidates."));
+                return;
+            }
+
+            var top = ranked[0];
+            var closeSecond = !isArchive && ranked.Count > 1 && Math.Abs(ranked[0].Confidence - ranked[1].Confidence) < 0.02;
+            var needsReview = !isArchive && (top.Confidence < AutoIngestConfidenceThreshold || closeSecond);
+            var statusMessage = isArchive
+                ? $"Archive preview ready ({ranked.Count} entr{(ranked.Count == 1 ? "y" : "ies")} sniffed). Select an entry to inspect its guessed profile."
+                : needsReview
+                    ? $"Low confidence guess ({top.ConfidenceDisplay}) for {top.FormatName}. Review before ingesting."
+                    : $"Detected {top.FormatName} ({top.ConfidenceDisplay}).";
+
+            RunOnUi(() =>
+            {
+                item.ApplyDetectionChoices(
+                    ranked,
+                    needsReview,
+                    statusMessage);
+
+                if (item.RequiresDetectionReview)
+                {
+                    OpenStagingPane();
+                    SelectedStagedSource = item;
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            RunOnUi(() => item.MarkDetectionFailed(ex.Message));
+        }
+    }
+
+    private async Task<List<DetectionChoiceViewModel>> BuildRankedDetectionChoicesAsync(Stream stream, string sourceName)
+    {
+        await using var ownedStream = stream;
+        var encoding = EncodingDetector.Detect(stream);
+        stream.Position = 0;
+
+        var sniffBuffer = new byte[(int)Math.Min(stream.Length, 128 * 1024)];
+        var bytesRead = await stream.ReadAsync(sniffBuffer.AsMemory(0, sniffBuffer.Length));
+        using var sniff = new MemoryStream(sniffBuffer, 0, bytesRead, writable: false);
+
+        var candidates = _detectionEngine.DetectCandidates(sniff, sourceName);
+        return candidates
+            .Select(candidate => BuildDetectionChoice(candidate, encoding, sniffBuffer, bytesRead))
+            .OrderByDescending(choice => choice.Confidence)
+            .ToList();
+    }
+
+    private async Task<List<DetectionChoiceViewModel>> BuildArchivePreviewChoicesAsync(string zipPath)
+    {
+        var choices = new List<DetectionChoiceViewModel>();
+        foreach (var entry in ZipHandler.EnumerateEntries(zipPath).Take(12))
+        {
+            await using var entryStream = ZipHandler.ExtractToMemory(zipPath, entry.EntryName);
+            var ranked = await BuildRankedDetectionChoicesAsync(entryStream, entry.EntryName);
+            var top = ranked.FirstOrDefault();
+            if (top is null)
+                continue;
+
+            choices.Add(BuildArchivePreviewChoice(zipPath, entry, top));
+        }
+
+        return choices;
+    }
+
+    private static DetectionChoiceViewModel BuildArchivePreviewChoice(
+        string zipPath,
+        ZipFileEntry entry,
+        DetectionChoiceViewModel choice)
+    {
+        var details = new List<DetectionDetailViewModel>
+        {
+            new("Archive", Path.GetFileName(zipPath)),
+            new("Entry", entry.EntryName)
+        };
+        details.AddRange(choice.Details);
+
+        return new DetectionChoiceViewModel(
+            FormatName: choice.FormatName,
+            ShortLabel: entry.EntryName,
+            Summary: $"{entry.EntryName} · {choice.Summary}",
+            Confidence: choice.Confidence,
+            Detection: choice.Detection,
+            Details: details,
+            Notes: choice.Notes);
+    }
+
+    private DetectionChoiceViewModel BuildDetectionChoice(
+        DetectionResult detection,
+        Encoding encoding,
+        byte[] sniffBuffer,
+        int bytesRead)
+    {
+        var formatName = FormatBoundaryName(detection.Boundary);
+        var shortLabel = BuildShortLabel(detection);
+        var sample = TryReadSampleTimestamp(detection, sniffBuffer, bytesRead, encoding);
+        var details = BuildDetectionDetails(detection, encoding, sample);
+        var summary = BuildDetectionSummary(formatName, shortLabel, encoding, sample);
+
+        return new DetectionChoiceViewModel(
+            FormatName: formatName,
+            ShortLabel: shortLabel,
+            Summary: summary,
+            Confidence: detection.Confidence,
+            Detection: detection,
+            Details: details,
+            Notes: detection.Notes);
+    }
+
+    private IReadOnlyList<DetectionDetailViewModel> BuildDetectionDetails(
+        DetectionResult detection,
+        Encoding encoding,
+        SampleTimestampInfo? sample)
+    {
+        var details = new List<DetectionDetailViewModel>
+        {
+            new("Encoding", EncodingDetector.Describe(encoding)),
+            new("Timezone", DescribeTimezoneHandling(sample))
+        };
+
+        switch (detection.Boundary)
+        {
+            case CsvBoundary csv:
+                details.Add(new("Structure", "CSV"));
+                details.Add(new("Delimiter", DescribeDelimiter(csv.Delimiter)));
+                details.Add(new("Header", csv.HasHeader ? "Detected" : "No header"));
+                if (csv.ColumnNames is { Length: > 0 })
+                {
+                    details.Add(new(
+                        "Columns",
+                        csv.ColumnNames.Length <= 4
+                            ? string.Join(", ", csv.ColumnNames)
+                            : $"{string.Join(", ", csv.ColumnNames.Take(4))}, ... ({csv.ColumnNames.Length} total)"));
+                }
+                details.Add(new("Timestamp field", ExtractTimestampLabel(detection)));
+                break;
+
+            case JsonNdBoundary json:
+                details.Add(new("Structure", "NDJSON"));
+                details.Add(new("Timestamp field", json.TimestampFieldPath ?? ExtractTimestampLabel(detection)));
+                break;
+
+            case TextSoRBoundary text:
+                details.Add(new("Structure", "Text"));
+                details.Add(new("Timestamp pattern", text.PatternName ?? ExtractTimestampLabel(detection)));
+                break;
+        }
+
+        if (sample is not null)
+        {
+            details.Add(new("Timestamp sample", sample.ParsedText));
+            if (!string.IsNullOrWhiteSpace(sample.AlternateText))
+                details.Add(new("Alternate sample", sample.AlternateText!));
+            details.Add(new("Offset in sample", sample.HasExplicitOffset ? "Explicit offset / Z preserved" : "Bare timestamp"));
+            if (sample.UsedTwoDigitYear)
+                details.Add(new("Parsing note", "Two-digit year window applied"));
+        }
+
+        return details;
+    }
+
+    private string BuildDetectionSummary(
+        string formatName,
+        string shortLabel,
+        Encoding encoding,
+        SampleTimestampInfo? sample)
+    {
+        var parts = new List<string> { formatName };
+        if (!string.IsNullOrWhiteSpace(shortLabel))
+            parts.Add(shortLabel);
+
+        parts.Add(EncodingDetector.Describe(encoding));
+        parts.Add(sample?.HasExplicitOffset == true ? "source offset preserved" : DescribeSessionTimezone());
+        return string.Join(" · ", parts);
+    }
+
+    private SampleTimestampInfo? TryReadSampleTimestamp(
+        DetectionResult detection,
+        byte[] sniffBuffer,
+        int bytesRead,
+        Encoding encoding)
+    {
+        if (detection.Extractor is not ITimestampExtractorWithMetadata extractorWithMetadata)
+            return null;
+
+        var raw = TryBuildSampleRecord(detection, sniffBuffer, bytesRead, encoding);
+        if (raw is null)
+            return null;
+
+        if (!extractorWithMetadata.TryExtractWithMetadata(raw, out var extraction))
+            return null;
+
+        return new SampleTimestampInfo(
+            extraction.ParsedText,
+            extraction.AlternateText,
+            extraction.HasExplicitOffset,
+            extraction.UsedTwoDigitYear);
+    }
+
+    private static RawRecord? TryBuildSampleRecord(
+        DetectionResult detection,
+        byte[] sniffBuffer,
+        int bytesRead,
+        Encoding encoding)
+    {
+        using var stream = new MemoryStream(sniffBuffer, 0, bytesRead, writable: false);
+        using var reader = new StreamReader(stream, encoding, detectEncodingFromByteOrderMarks: true, leaveOpen: false);
+
+        var lines = new List<string>();
+        while (reader.ReadLine() is { } line && lines.Count < 32)
+        {
+            if (!string.IsNullOrWhiteSpace(line))
+                lines.Add(line);
+        }
+
+        if (lines.Count == 0)
+            return null;
+
+        return detection.Boundary switch
+        {
+            TextSoRBoundary => new RawRecord(lines[0], lines[0], 1, 0),
+            JsonNdBoundary => BuildJsonSample(lines),
+            CsvBoundary csv => BuildCsvSample(lines, csv),
+            _ => null
+        };
+    }
+
+    private static RawRecord? BuildJsonSample(IReadOnlyList<string> lines)
+    {
+        foreach (var line in lines)
+        {
+            if (!LooksLikeJsonObject(line))
+                continue;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(line);
+                if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                    continue;
+
+                var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var prop in doc.RootElement.EnumerateObject())
+                    fields[prop.Name] = prop.Value.ValueKind == JsonValueKind.String
+                        ? prop.Value.GetString() ?? ""
+                        : prop.Value.GetRawText();
+
+                return new RawRecord(line, line, 1, 0, fields);
+            }
+            catch
+            {
+                // ignore malformed preview rows
+            }
+        }
+
+        return null;
+    }
+
+    private static bool LooksLikeJsonObject(string line)
+    {
+        var trimmed = line.Trim();
+        return trimmed.Length >= 2
+            && trimmed[0] == '{'
+            && trimmed[^1] == '}'
+            && trimmed.Contains(':');
+    }
+
+    private static RawRecord? BuildCsvSample(IReadOnlyList<string> lines, CsvBoundary csv)
+    {
+        var dataIndex = csv.HasHeader ? 1 : 0;
+        if (lines.Count <= dataIndex)
+            return null;
+
+        var dataLine = lines[dataIndex];
+        var columnNames = csv.ColumnNames;
+        if ((columnNames is null || columnNames.Length == 0) && csv.HasHeader && lines.Count > 0)
+            columnNames = SplitPreviewCsvLine(lines[0], csv.Delimiter);
+
+        if (columnNames is null || columnNames.Length == 0)
+            return new RawRecord(dataLine, dataLine, dataIndex + 1, 0);
+
+        var values = SplitPreviewCsvLine(dataLine, csv.Delimiter);
+        var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < columnNames.Length && i < values.Length; i++)
+            fields[columnNames[i]] = values[i];
+
+        return new RawRecord(dataLine, dataLine, dataIndex + 1, 0, fields);
+    }
+
+    private static string[] SplitPreviewCsvLine(string line, char delimiter)
+    {
+        var fields = new List<string>();
+        var sb = new StringBuilder();
+        var inQuotes = false;
+        var i = 0;
+
+        while (i < line.Length)
+        {
+            var c = line[i];
+            if (inQuotes)
+            {
+                if (c == '"')
+                {
+                    if (i + 1 < line.Length && line[i + 1] == '"')
+                    {
+                        sb.Append('"');
+                        i += 2;
+                        continue;
+                    }
+
+                    inQuotes = false;
+                    i++;
+                    continue;
+                }
+
+                sb.Append(c);
+                i++;
+                continue;
+            }
+
+            if (c == '"')
+            {
+                inQuotes = true;
+                i++;
+                continue;
+            }
+
+            if (c == delimiter)
+            {
+                fields.Add(sb.ToString());
+                sb.Clear();
+                i++;
+                continue;
+            }
+
+            sb.Append(c);
+            i++;
+        }
+
+        fields.Add(sb.ToString());
+        return [.. fields];
+    }
+
+    private string BuildShortLabel(DetectionResult detection) =>
+        detection.Boundary switch
+        {
+            CsvBoundary => ExtractTimestampLabel(detection),
+            JsonNdBoundary json => json.TimestampFieldPath ?? ExtractTimestampLabel(detection),
+            TextSoRBoundary text => text.PatternName ?? ExtractTimestampLabel(detection),
+            _ => detection.Extractor.Description
+        };
+
+    private static string ExtractTimestampLabel(DetectionResult detection)
+    {
+        var description = detection.Extractor.Description;
+        if (description.StartsWith("CsvField(", StringComparison.Ordinal))
+            return description["CsvField(".Length..^1];
+        if (description.StartsWith("CsvComposite(", StringComparison.Ordinal))
+            return description["CsvComposite(".Length..^1].Replace("+", " + ", StringComparison.Ordinal);
+        if (description.StartsWith("JsonField(", StringComparison.Ordinal))
+            return description["JsonField(".Length..^1];
+        if (description.StartsWith("RegexGroup(", StringComparison.Ordinal))
+            return description["RegexGroup(".Length..^1];
+
+        return description;
+    }
+
+    private string DescribeTimezoneHandling(SampleTimestampInfo? sample)
+    {
+        if (sample?.HasExplicitOffset == true)
+            return "Source offset preserved";
+
+        var timeBasis = BuildDefaultTimeBasisConfig();
+        return timeBasis.Basis switch
+        {
+            TimeBasis.Utc => "Bare timestamps use UTC",
+            TimeBasis.Zone when !string.IsNullOrWhiteSpace(timeBasis.TimeZoneId) =>
+                $"Bare timestamps use {timeBasis.TimeZoneId}",
+            TimeBasis.FixedOffset when timeBasis.OffsetMinutes.HasValue =>
+                $"Bare timestamps use UTC{FormatOffset(timeBasis.OffsetMinutes.Value)}",
+            _ => $"Bare timestamps use {TimeZoneInfo.Local.Id}"
+        };
+    }
+
+    private static string DescribeDelimiter(char delimiter) =>
+        delimiter == '\t' ? "Tab" : delimiter.ToString();
+
+    private static string FormatOffset(int offsetMinutes)
+    {
+        var offset = TimeSpan.FromMinutes(offsetMinutes);
+        return $"{(offset >= TimeSpan.Zero ? "+" : "-")}{Math.Abs(offset.Hours):00}:{Math.Abs(offset.Minutes):00}";
+    }
+
+    private static string FormatBoundaryName(RecordBoundarySpec boundary) =>
+        boundary switch
+        {
+            CsvBoundary => "CSV",
+            JsonNdBoundary => "NDJSON",
+            TextSoRBoundary => "Text",
+            _ => boundary.GetType().Name.Replace("Boundary", "", StringComparison.Ordinal)
+        };
+
+    private static void RunOnUi(Action action)
+    {
+        RxApp.MainThreadScheduler.Schedule(Unit.Default, (_, _) =>
+        {
+            action();
+            return Disposable.Empty;
+        });
+    }
+
+    private static Task<T> RunOnUiAsync<T>(Func<T> action)
+    {
+        var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        RxApp.MainThreadScheduler.Schedule(Unit.Default, (_, _) =>
+        {
+            try
+            {
+                tcs.TrySetResult(action());
+            }
+            catch (Exception ex)
+            {
+                tcs.TrySetException(ex);
+            }
+
+            return Disposable.Empty;
+        });
+
+        return tcs.Task;
+    }
+
+    private void RaiseStagingStateProperties()
+    {
+        this.RaisePropertyChanged(nameof(HasPendingDetectionReview));
+        this.RaisePropertyChanged(nameof(HasSniffingInProgress));
+        this.RaisePropertyChanged(nameof(HasStagedSources));
+        this.RaisePropertyChanged(nameof(HasRunnableStagedSources));
+        this.RaisePropertyChanged(nameof(CanStartIngestion));
+        this.RaisePropertyChanged(nameof(CanModifyStagedSources));
+        this.RaisePropertyChanged(nameof(StagingSummary));
+        this.RaisePropertyChanged(nameof(StagingPaneToggleText));
+        this.RaisePropertyChanged(nameof(CanConfirmSelectedDetection));
+        this.RaisePropertyChanged(nameof(CanRemoveSelectedStagedSource));
+        this.RaisePropertyChanged(nameof(CanReingestSelectedSource));
+    }
+
+    private TimeBasisConfig BuildDefaultTimeBasisConfig()
+    {
+        var tz = SessionDefaults.ResolveDefaultTimezone(DefaultTimezone);
+        if (!SessionDefaults.IsValidTimezoneId(tz))
+            return new TimeBasisConfig(TimeBasis.Local);
+
+        if (string.Equals(tz, TimeZoneInfo.Local.Id, StringComparison.OrdinalIgnoreCase))
+            return new TimeBasisConfig(TimeBasis.Local);
+
+        if (string.Equals(tz, "UTC", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(tz, "Etc/UTC", StringComparison.OrdinalIgnoreCase))
+        {
+            return new TimeBasisConfig(TimeBasis.Utc);
+        }
+
+        return new TimeBasisConfig(TimeBasis.Zone, TimeZoneId: tz);
+    }
+
+    private string DescribeSessionTimezone()
+    {
+        var timeBasis = BuildDefaultTimeBasisConfig();
+        return timeBasis.Basis switch
+        {
+            TimeBasis.Utc => "UTC",
+            TimeBasis.Zone when !string.IsNullOrWhiteSpace(timeBasis.TimeZoneId) => timeBasis.TimeZoneId!,
+            TimeBasis.FixedOffset when timeBasis.OffsetMinutes.HasValue => $"UTC{FormatOffset(timeBasis.OffsetMinutes.Value)}",
+            _ => TimeZoneInfo.Local.Id
+        };
+    }
+
+    private void AttachStagedSource(StagedSourceItemViewModel item) =>
+        item.PropertyChanged += OnStagedSourcePropertyChanged;
+
+    private void DetachStagedSource(StagedSourceItemViewModel item) =>
+        item.PropertyChanged -= OnStagedSourcePropertyChanged;
+
+    private void OnStagedSourcePropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(StagedSourceItemViewModel.RequiresDetectionReview)
+            or nameof(StagedSourceItemViewModel.IsSniffing)
+            or nameof(StagedSourceItemViewModel.SelectedDetectionChoice)
+            or nameof(StagedSourceItemViewModel.Phase))
+        {
+            RaiseStagingStateProperties();
+        }
+    }
+
+    private List<StagedSourceItemViewModel> StagePathsCore(
+        IReadOnlyList<string> paths,
+        bool openPane,
+        bool queueSniff) =>
+        StageExpandedPathsCore(ExpandInputPaths(paths).ToArray(), openPane, queueSniff);
+
+    private List<StagedSourceItemViewModel> StageExpandedPathsCore(
+        IReadOnlyList<string> expandedPaths,
+        bool openPane,
+        bool queueSniff)
+    {
+        var stagedItems = new List<StagedSourceItemViewModel>();
+        var newlyAdded = new List<StagedSourceItemViewModel>();
+
+        foreach (var fullPath in expandedPaths)
+        {
+            var existing = StagedSources.FirstOrDefault(item =>
+                string.Equals(Path.GetFullPath(item.SourcePath), fullPath, StringComparison.OrdinalIgnoreCase));
+            if (existing is not null)
+            {
+                stagedItems.Add(existing);
+                continue;
+            }
+
+            var item = new StagedSourceItemViewModel(fullPath, isDirectory: false);
+            StagedSources.Add(item);
+            AttachStagedSource(item);
+            stagedItems.Add(item);
+            newlyAdded.Add(item);
+        }
+
+        if (openPane && stagedItems.Count > 0)
+            OpenStagingPane();
+
+        if (SelectedStagedSource is null && stagedItems.Count > 0)
+            SelectedStagedSource = stagedItems[0];
+        else if (newlyAdded.Count > 0)
+            SelectedStagedSource = newlyAdded[0];
+
+        if (queueSniff && newlyAdded.Count > 0)
+            QueueSniff(newlyAdded);
+
+        RaiseStagingStateProperties();
+        return stagedItems;
+    }
+
+    private async Task StagePathsAsync(IReadOnlyList<string> paths)
+    {
+        if (paths.Count == 0)
+        {
+            StatusText = BuildSessionStatus("No files were staged.");
+            return;
+        }
+
+        OpenStagingPane();
+        StatusText = BuildSessionStatus($"Staging {paths.Count} path(s)...");
+        await Task.Yield();
+
+        var expandedPaths = await Task.Run(() => ExpandInputPaths(paths).ToArray());
+        var stagedItems = await RunOnUiAsync(() => StageExpandedPathsCore(expandedPaths, openPane: false, queueSniff: true));
+        if (stagedItems.Count == 0)
+        {
+            await RunOnUiAsync(() =>
+            {
+                StatusText = BuildSessionStatus("No files were staged.");
+                return 0;
+            });
+            return;
+        }
+
+        await RunOnUiAsync(() =>
+        {
+            StatusText = BuildSessionStatus($"Staged {stagedItems.Count} file(s).");
+            return 0;
+        });
+    }
+
+    private static IEnumerable<string> ExpandInputPaths(IReadOnlyList<string> inputPaths)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var rawPath in inputPaths.Where(path => !string.IsNullOrWhiteSpace(path)))
+        {
+            var fullPath = Path.GetFullPath(rawPath);
+            if (File.Exists(fullPath))
+            {
+                if (seen.Add(fullPath))
+                    yield return fullPath;
+                continue;
+            }
+
+            if (Directory.Exists(fullPath))
+            {
+                IEnumerable<string> files;
+                try
+                {
+                    files = Directory.EnumerateFiles(fullPath, "*", SearchOption.AllDirectories);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (var file in files)
+                {
+                    var expanded = Path.GetFullPath(file);
+                    if (seen.Add(expanded))
+                        yield return expanded;
+                }
+
+                continue;
+            }
+
+            if (seen.Add(fullPath))
+                yield return fullPath;
+        }
     }
 
     private void RemoveStagedSource(StagedSourceItemViewModel? item)
     {
-        if (item is null) return;
-        if (!item.CanEdit) return;
+        if (item is null || !item.CanEdit)
+            return;
+
+        var index = StagedSources.IndexOf(item);
         DetachStagedSource(item);
         StagedSources.Remove(item);
-        RaiseIngestionReadinessProperties();
+
+        if (ReferenceEquals(SelectedStagedSource, item))
+        {
+            SelectedStagedSource = StagedSources.Count == 0
+                ? null
+                : StagedSources[Math.Clamp(index, 0, StagedSources.Count - 1)];
+        }
+
+        RaiseStagingStateProperties();
     }
 
     private void ClearStagedSources()
@@ -727,17 +1469,41 @@ public class SessionShellViewModel : ViewModelBase
             DetachStagedSource(item);
             StagedSources.Remove(item);
         }
-        RaiseIngestionReadinessProperties();
+
+        if (SelectedStagedSource is not null && !StagedSources.Contains(SelectedStagedSource))
+            SelectedStagedSource = StagedSources.FirstOrDefault();
+
+        RaiseStagingStateProperties();
     }
 
     private async Task StartIngestionAsync()
     {
-        if (IsIngesting) return;
-        var stagedPaths = StagedSources.Select(s => s.SourcePath).ToList();
-        if (stagedPaths.Count == 0) return;
+        if (IsIngesting)
+            return;
+
+        if (HasPendingDetectionReview)
+        {
+            OpenStagingPane();
+            SelectedStagedSource = StagedSources.FirstOrDefault(source => source.RequiresDetectionReview);
+            StatusText = BuildSessionStatus("Review low-confidence guesses before ingesting.");
+            return;
+        }
+
+        var stagedPaths = StagedSources
+            .Where(source => source.Phase != nameof(IngestFilePhase.Completed))
+            .Select(source => source.SourcePath)
+            .ToArray();
+        if (stagedPaths.Length == 0)
+        {
+            StatusText = BuildSessionStatus("No staged files are waiting to ingest.");
+            return;
+        }
+
         await IngestFilesAsync(stagedPaths);
-        RaiseIngestionReadinessProperties();
+        RaiseStagingStateProperties();
     }
+
+    private void ToggleStagingPane() => IsStagingPaneOpen = !IsStagingPaneOpen;
 
     private void BeginHeaderEdit()
     {
@@ -754,7 +1520,7 @@ public class SessionShellViewModel : ViewModelBase
         var timezone = SessionDefaults.ResolveDefaultTimezone(EditableTimezone);
         if (!SessionDefaults.IsValidTimezoneId(timezone))
         {
-            StatusText = $"Invalid timezone '{timezone}'.";
+            StatusText = BuildSessionStatus($"Invalid timezone '{timezone}'.");
             return;
         }
 
@@ -770,12 +1536,14 @@ public class SessionShellViewModel : ViewModelBase
 
         using var globalStore = new GlobalStore();
         await globalStore.AddRecentSessionAsync(_sessionFolder, Title, Description);
+
+        if (LogsPage is not null)
+            LogsPage.SetDisplayTimezone(DefaultTimezone);
+
+        StatusText = BuildSessionStatus("Session header updated.");
     }
 
-    private void CancelHeaderEdit()
-    {
-        IsEditingHeader = false;
-    }
+    private void CancelHeaderEdit() => IsEditingHeader = false;
 
     private void OnIngestProgress(IngestProgressUpdate update)
     {
@@ -783,28 +1551,50 @@ public class SessionShellViewModel : ViewModelBase
         var bangIndex = sourcePath.IndexOf('!');
         var archivePath = bangIndex > 0 ? sourcePath[..bangIndex] : sourcePath;
 
-        var item = StagedSources.FirstOrDefault(s =>
-            string.Equals(Path.GetFullPath(s.SourcePath), sourcePath, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(Path.GetFullPath(s.SourcePath), archivePath, StringComparison.OrdinalIgnoreCase));
+        var item = StagedSources.FirstOrDefault(staged =>
+            string.Equals(Path.GetFullPath(staged.SourcePath), sourcePath, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Path.GetFullPath(staged.SourcePath), archivePath, StringComparison.OrdinalIgnoreCase));
         if (item is not null)
         {
-            item.ApplyProgress(
-                phase: update.Phase.ToString(),
-                bytesProcessed: update.BytesProcessed,
-                bytesTotal: update.BytesTotal,
-                recordsProcessed: update.RecordsProcessed,
-                message: update.Message);
+            if (bangIndex > 0 && string.Equals(Path.GetFullPath(item.SourcePath), archivePath, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!_archiveEntryProgress.TryGetValue(archivePath, out var entryUpdates))
+                {
+                    entryUpdates = new Dictionary<string, IngestProgressUpdate>(StringComparer.OrdinalIgnoreCase);
+                    _archiveEntryProgress[archivePath] = entryUpdates;
+                }
+
+                entryUpdates[sourcePath] = update;
+                var aggregate = AggregateArchiveProgress(entryUpdates.Values, update.Message);
+                item.ApplyProgress(
+                    phase: aggregate.Phase,
+                    bytesProcessed: aggregate.BytesProcessed,
+                    bytesTotal: aggregate.BytesTotal,
+                    recordsProcessed: aggregate.RecordsProcessed,
+                    message: aggregate.Message);
+            }
+            else
+            {
+                item.ApplyProgress(
+                    phase: update.Phase.ToString(),
+                    bytesProcessed: update.BytesProcessed,
+                    bytesTotal: update.BytesTotal,
+                    recordsProcessed: update.RecordsProcessed,
+                    message: update.Message);
+            }
         }
 
         RecalculateOverallProgress();
     }
 
-    private void ResetPerItemProgress()
+    private void ResetPerItemProgress(IReadOnlyList<string> filePaths)
     {
-        foreach (var item in StagedSources)
+        var canonicalPaths = new HashSet<string>(filePaths.Select(Path.GetFullPath), StringComparer.OrdinalIgnoreCase);
+        foreach (var item in StagedSources.Where(item => canonicalPaths.Contains(Path.GetFullPath(item.SourcePath))))
         {
+            _archiveEntryProgress.Remove(Path.GetFullPath(item.SourcePath));
             item.ApplyProgress(
-                phase: "Queued",
+                phase: nameof(IngestFilePhase.Queued),
                 bytesProcessed: 0,
                 bytesTotal: 0,
                 recordsProcessed: 0,
@@ -814,37 +1604,45 @@ public class SessionShellViewModel : ViewModelBase
 
     private void RecalculateOverallProgress()
     {
-        var now = DateTimeOffset.UtcNow;
-        var totalBytesProcessed = StagedSources.Sum(s => s.BytesProcessed);
-        var totalBytesTotal = StagedSources.Sum(s => s.BytesTotal);
-        var totalRecords = StagedSources.Sum(s => s.RecordsProcessed);
+        if (_activeIngestPaths.Count == 0)
+            return;
 
-        if (_lastOverallUpdateUtc.HasValue)
-        {
-            var elapsed = (now - _lastOverallUpdateUtc.Value).TotalSeconds;
-            if (elapsed > 0)
-            {
-                var deltaRecords = totalRecords - _lastOverallRecords;
-                if (deltaRecords >= 0)
-                    OverallRecordsPerSecond = deltaRecords / elapsed;
-            }
-        }
+        var activeItems = StagedSources
+            .Where(item => _activeIngestPaths.Contains(Path.GetFullPath(item.SourcePath)))
+            .ToArray();
+        if (activeItems.Length == 0)
+            return;
 
-        _lastOverallUpdateUtc = now;
-        _lastOverallRecords = totalRecords;
-
+        var totalBytesProcessed = activeItems.Sum(item => item.BytesProcessed);
+        var totalBytesTotal = activeItems.Sum(item => item.BytesTotal);
+        var totalRecords = activeItems.Sum(item => item.RecordsProcessed);
         OverallBytesProcessed = totalBytesProcessed;
         OverallBytesTotal = totalBytesTotal;
+        var now = DateTimeOffset.UtcNow;
 
-        if (OverallRecordsPerSecond > 0 && totalBytesTotal > 0 && totalBytesProcessed < totalBytesTotal && totalRecords > 0)
+        if (!_overallProgressStartedUtc.HasValue && (totalBytesProcessed > 0 || totalRecords > 0))
+            _overallProgressStartedUtc = now;
+
+        if (_overallProgressStartedUtc.HasValue)
         {
-            var processedRatio = Math.Clamp((double)totalBytesProcessed / totalBytesTotal, 0.0, 1.0);
-            var estimatedTotalRecords = totalRecords / Math.Max(processedRatio, 0.01);
-            var remainingRecords = Math.Max(estimatedTotalRecords - totalRecords, 0);
-            OverallEtaSeconds = remainingRecords / OverallRecordsPerSecond;
+            var elapsed = (now - _overallProgressStartedUtc.Value).TotalSeconds;
+            if (elapsed >= MinStableRateWindow.TotalSeconds && totalRecords > 0)
+                OverallRecordsPerSecond = totalRecords / elapsed;
+            else
+                OverallRecordsPerSecond = 0;
+
+            var bytesPerSecond = elapsed >= MinStableRateWindow.TotalSeconds && totalBytesProcessed > 0
+                ? totalBytesProcessed / elapsed
+                : 0;
+
+            if (bytesPerSecond > 0 && totalBytesTotal > 0 && totalBytesProcessed > 0 && totalBytesProcessed < totalBytesTotal)
+                OverallEtaSeconds = Math.Max((totalBytesTotal - totalBytesProcessed) / bytesPerSecond, 1);
+            else
+                OverallEtaSeconds = null;
         }
         else
         {
+            OverallRecordsPerSecond = 0;
             OverallEtaSeconds = null;
         }
 
@@ -855,12 +1653,100 @@ public class SessionShellViewModel : ViewModelBase
 
     private void ResetOverallProgress()
     {
-        _lastOverallUpdateUtc = null;
-        _lastOverallRecords = 0;
+        _overallProgressStartedUtc = null;
         OverallRecordsPerSecond = 0;
         OverallEtaSeconds = null;
         OverallBytesProcessed = 0;
         OverallBytesTotal = 0;
+        this.RaisePropertyChanged(nameof(OverallProgressDisplay));
+        this.RaisePropertyChanged(nameof(OverallThroughputDisplay));
+        this.RaisePropertyChanged(nameof(OverallEtaDisplay));
+    }
+
+    private async Task RefreshBrowseAsync(bool resetFilters, bool invalidateCache)
+    {
+        if (LogsPage is null || Timeline is null || FacetPanel is null)
+            return;
+
+        if (resetFilters)
+            Timeline.ClearSelection();
+
+        await Timeline.LoadCoarseBinsAsync();
+
+        FacetPanel.InvalidateCache();
+        if (resetFilters)
+            FacetPanel.ResetFilters();
+
+        await FacetPanel.RefreshAsync();
+
+        if (resetFilters)
+            await LogsPage.ResetFiltersAndRefreshAsync(invalidateCache);
+        else
+            await LogsPage.RefreshResultsAsync(invalidateCache);
+    }
+
+    private void AutoHideStagingPaneIfAllCompleted()
+    {
+        if (StagedSources.Count > 0 && StagedSources.All(item => item.Phase == nameof(IngestFilePhase.Completed)))
+            IsStagingPaneOpen = false;
+    }
+
+    private static (string Phase, long BytesProcessed, long BytesTotal, long RecordsProcessed, string? Message) AggregateArchiveProgress(
+        IEnumerable<IngestProgressUpdate> updates,
+        string? latestMessage)
+    {
+        var snapshot = updates.ToArray();
+        if (snapshot.Length == 0)
+            return (nameof(IngestFilePhase.Queued), 0, 0, 0, latestMessage);
+
+        var phase = snapshot.Any(update => update.Phase == IngestFilePhase.Failed)
+            ? IngestFilePhase.Failed
+            : snapshot.Any(update => update.Phase == IngestFilePhase.Ingesting)
+                ? IngestFilePhase.Ingesting
+                : snapshot.Any(update => update.Phase == IngestFilePhase.Sniffing)
+                    ? IngestFilePhase.Sniffing
+                    : snapshot.All(update => update.Phase is IngestFilePhase.Completed or IngestFilePhase.Skipped)
+                        ? IngestFilePhase.Completed
+                        : snapshot[^1].Phase;
+
+        var finishedEntries = snapshot.Count(update => update.Phase is IngestFilePhase.Completed or IngestFilePhase.Skipped);
+        var message = snapshot.Length > 1
+            ? $"{finishedEntries}/{snapshot.Length} archive entries processed"
+            : latestMessage;
+
+        return (
+            phase.ToString(),
+            snapshot.Sum(update => update.BytesProcessed),
+            snapshot.Sum(update => update.BytesTotal),
+            snapshot.Sum(update => update.RecordsProcessed),
+            message);
+    }
+
+    private bool TryFindStagedSource(string sourcePath, out StagedSourceItemViewModel item)
+    {
+        var canonical = Path.GetFullPath(sourcePath);
+        item = StagedSources.FirstOrDefault(staged =>
+            string.Equals(Path.GetFullPath(staged.SourcePath), canonical, StringComparison.OrdinalIgnoreCase))!;
+        return item is not null;
+    }
+
+    private string BuildSessionStatus(string detail) =>
+        $"{RecordCount:N0} records | {detail} | {_sessionFolder}";
+
+    private void DismissRecoveryBanner()
+    {
+        _recoveryBannerDismissed = true;
+        CrashRecovery = new CrashRecoveryViewModel();
+        StatusText = BuildSessionStatus("Recovery dismissed.");
+    }
+
+    private void ConfirmDetectionChoice(StagedSourceItemViewModel? item)
+    {
+        if (item is null)
+            return;
+
+        item.ConfirmDetectionSelection();
+        RaiseStagingStateProperties();
     }
 
     private static string FormatBytes(long bytes)
@@ -871,12 +1757,9 @@ public class SessionShellViewModel : ViewModelBase
         return $"{bytes / (1024d * 1024 * 1024):N1} GB";
     }
 
-    private void ConfirmDetectionChoice(StagedSourceItemViewModel? item)
-    {
-        if (item is null)
-            return;
-
-        item.ConfirmDetectionSelection();
-        RaiseIngestionReadinessProperties();
-    }
+    private sealed record SampleTimestampInfo(
+        string ParsedText,
+        string? AlternateText,
+        bool HasExplicitOffset,
+        bool UsedTwoDigitYear);
 }

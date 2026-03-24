@@ -13,7 +13,7 @@ public class AboutDialogViewModel : ViewModelBase
         AppVersion = appVersion;
         Tagline = tagline;
 
-        CloseCommand = ReactiveCommand.Create(() => { IsOpen = false; });
+        CloseCommand = ReactiveCommand.Create(Close);
     }
 
     public string AppName { get; }
@@ -31,8 +31,21 @@ public class AboutDialogViewModel : ViewModelBase
 
     public ReactiveCommand<Unit, Unit> CloseCommand { get; }
 
+    public void Open()
+    {
+        IsOpen = true;
+    }
+
+    public void Close()
+    {
+        IsOpen = false;
+    }
+
     public void Toggle()
     {
-        IsOpen = !IsOpen;
+        if (IsOpen)
+            Close();
+        else
+            Open();
     }
 }

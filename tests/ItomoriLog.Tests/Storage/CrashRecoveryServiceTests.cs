@@ -102,7 +102,7 @@ public class CrashRecoveryServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task CheckAsync_WithRunningRun_DetectsIncomplete()
+    public async Task CheckAsync_WithRunningRunButNoSources_DoesNotSurfaceResume()
     {
         var conn = await _factory.GetConnectionAsync();
         await SchemaInitializer.EnsureSchemaAsync(conn);
@@ -115,12 +115,13 @@ public class CrashRecoveryServiceTests : IDisposable
         var svc = new CrashRecoveryService(_tempDir);
         var status = await svc.CheckAsync(conn);
 
-        status.CrashDetected.Should().BeTrue();
+        status.CrashDetected.Should().BeFalse();
+        status.CanResume.Should().BeFalse();
         status.IncompleteRunIds.Should().Contain("run1");
     }
 
     [Fact]
-    public async Task CheckAsync_StaleLockOnly_DetectsCrash()
+    public async Task CheckAsync_StaleLockOnly_DoesNotSurfaceResume()
     {
         var conn = await _factory.GetConnectionAsync();
         await SchemaInitializer.EnsureSchemaAsync(conn);
@@ -133,7 +134,8 @@ public class CrashRecoveryServiceTests : IDisposable
 
         var status = await svc.CheckAsync(conn);
 
-        status.CrashDetected.Should().BeTrue();
+        status.CrashDetected.Should().BeFalse();
+        status.CanResume.Should().BeFalse();
     }
 
     [Fact]
@@ -163,7 +165,7 @@ public class CrashRecoveryServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task CheckAsync_WithSegments_CountsCorrectly()
+    public async Task CheckAsync_WithSegments_CountsIncompleteSegmentsWithoutResume()
     {
         var conn = await _factory.GetConnectionAsync();
         await SchemaInitializer.EnsureSchemaAsync(conn);
@@ -184,8 +186,35 @@ public class CrashRecoveryServiceTests : IDisposable
         var svc = new CrashRecoveryService(_tempDir);
         var status = await svc.CheckAsync(conn);
 
-        status.CrashDetected.Should().BeTrue();
+        status.CrashDetected.Should().BeFalse();
+        status.CanResume.Should().BeFalse();
         status.IncompleteSegmentCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task CheckAsync_WithResumableSources_SurfacesResume()
+    {
+        var conn = await _factory.GetConnectionAsync();
+        await SchemaInitializer.EnsureSchemaAsync(conn);
+
+        using var runCmd = conn.CreateCommand();
+        runCmd.CommandText = "INSERT INTO ingest_runs (run_id, started_utc, status) VALUES ('run1', '2024-01-01', 'running')";
+        await runCmd.ExecuteNonQueryAsync();
+
+        using var sourceCmd = conn.CreateCommand();
+        sourceCmd.CommandText = """
+            INSERT INTO ingest_run_sources (run_id, source_path, source_order)
+            VALUES ('run1', 'C:\logs\app.log', 0),
+                   ('run1', 'C:\logs\worker.log', 1)
+            """;
+        await sourceCmd.ExecuteNonQueryAsync();
+
+        var svc = new CrashRecoveryService(_tempDir);
+        var status = await svc.CheckAsync(conn);
+
+        status.CrashDetected.Should().BeTrue();
+        status.CanResume.Should().BeTrue();
+        status.ResumableSourcePaths.Should().ContainInOrder(@"C:\logs\app.log", @"C:\logs\worker.log");
     }
 
     [Fact]

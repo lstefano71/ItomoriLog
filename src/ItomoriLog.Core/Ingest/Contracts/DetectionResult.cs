@@ -11,4 +11,4 @@ public sealed record DetectionResult(
 public abstract record RecordBoundarySpec;
 public sealed record CsvBoundary(char Delimiter, bool HasHeader, string[]? ColumnNames = null) : RecordBoundarySpec;
 public sealed record JsonNdBoundary(string? TimestampFieldPath = null) : RecordBoundarySpec;
-public sealed record TextSoRBoundary(Regex StartRegex, bool Anchored = true) : RecordBoundarySpec;
+public sealed record TextSoRBoundary(Regex StartRegex, bool Anchored = true, string? PatternName = null) : RecordBoundarySpec;

@@ -633,6 +633,32 @@ public class TickCompilerTests
         Assert.Equal(latest, r.ExclusiveEnd);
     }
 
+    [Fact]
+    public void Compile_StartAlias_ResolvesFromContext()
+    {
+        var first = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var ctx = new TickContext(Now, FirstTimestamp: first);
+        var r = CompileSingle("$start", ctx);
+        Assert.Equal(first, r.Start);
+    }
+
+    [Fact]
+    public void Compile_EndAlias_ResolvesFromContext()
+    {
+        var latest = new DateTimeOffset(2025, 6, 15, 11, 59, 0, TimeSpan.Zero);
+        var ctx = new TickContext(Now, LatestTimestamp: latest);
+        var r = CompileSingle("$end", ctx);
+        Assert.Equal(latest, r.Start);
+    }
+
+    [Fact]
+    public void Compile_UnknownVariable_ReturnsWarning()
+    {
+        var result = _compiler.Compile("$startx", Ctx);
+        Assert.Empty(result.Intervals);
+        Assert.Contains("Unknown variable", result.Warning);
+    }
+
     // =======================================================================
     // NEW: Error handling
     // =======================================================================

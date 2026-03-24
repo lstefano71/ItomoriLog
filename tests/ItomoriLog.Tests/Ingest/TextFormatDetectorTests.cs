@@ -18,6 +18,7 @@ public class TextFormatDetectorTests
         result.Should().NotBeNull();
         result!.Confidence.Should().BeGreaterThan(0.8);
         result.Boundary.Should().BeOfType<TextSoRBoundary>();
+        ((TextSoRBoundary)result.Boundary).PatternName.Should().NotBeNullOrWhiteSpace();
     }
 
     [Fact]

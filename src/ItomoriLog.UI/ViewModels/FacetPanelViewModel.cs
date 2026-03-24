@@ -165,6 +165,20 @@ public class FacetPanelViewModel : ViewModelBase
         RefreshDebounced();
     }
 
+    public void ResetFilters()
+    {
+        FilterStart = null;
+        FilterEnd = null;
+
+        foreach (var facet in LevelFacets)
+            facet.State = FacetSelectionState.Ignore;
+
+        foreach (var facet in SourceFacets)
+            facet.State = FacetSelectionState.Ignore;
+
+        NotifySelectionChanged();
+    }
+
     /// <summary>
     /// Get the currently selected (Include) levels.
     /// </summary>

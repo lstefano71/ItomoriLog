@@ -21,7 +21,7 @@
 
       <!-- Resume button -->
       <Button Grid.Column="1"
-              Content="Resume"
+              Content="Resume ingest"
               Command="{Binding ResumeCommand}"
               Margin="8,0"
               Padding="12,4"
