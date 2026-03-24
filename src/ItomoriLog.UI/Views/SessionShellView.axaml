@@ -1,0 +1,69 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:ItomoriLog.UI.ViewModels"
+             xmlns:views="using:ItomoriLog.UI.Views"
+             x:Class="ItomoriLog.UI.Views.SessionShellView"
+             x:DataType="vm:SessionShellViewModel">
+
+  <DockPanel>
+    <!-- Session Header -->
+    <Border DockPanel.Dock="Top" Background="{StaticResource Itomori.Panel}" Padding="16,10">
+      <Grid ColumnDefinitions="*,Auto">
+        <StackPanel Orientation="Horizontal" Spacing="16">
+          <TextBlock Text="{Binding Title}" FontSize="18" FontWeight="SemiBold"
+                     Foreground="{StaticResource Itomori.Foreground}" VerticalAlignment="Center" />
+          <TextBlock Text="{Binding Description}" FontSize="13"
+                     Foreground="{StaticResource Itomori.SubtleForeground}" VerticalAlignment="Center" />
+          <Border Background="#2A2F3A" CornerRadius="4" Padding="6,2" VerticalAlignment="Center"
+                  IsVisible="{Binding DefaultTimezone, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+            <TextBlock Text="{Binding DefaultTimezone}" FontSize="11"
+                       Foreground="{StaticResource Brush.NeonCyan}" />
+          </Border>
+        </StackPanel>
+        <Button Grid.Column="1" Content="✕ Close" Command="{Binding CloseSessionCommand}"
+                Background="Transparent" BorderThickness="0" VerticalAlignment="Center" />
+      </Grid>
+    </Border>
+
+    <!-- Status Bar -->
+    <Border DockPanel.Dock="Bottom" Background="{StaticResource Itomori.Panel}" Padding="16,6">
+      <TextBlock Text="{Binding StatusText}" FontSize="12"
+                 Foreground="{StaticResource Itomori.SubtleForeground}" />
+    </Border>
+
+    <!-- Content Area -->
+    <Grid>
+      <!-- Log Grid (shown when records exist or after ingest) -->
+      <SplitView IsPaneOpen="{Binding LogsPage.IsDetailOpen}"
+                 DisplayMode="Inline"
+                 PanePlacement="Right"
+                 OpenPaneLength="420"
+                 IsVisible="{Binding LogsPage, Converter={x:Static ObjectConverters.IsNotNull}}">
+        <SplitView.Pane>
+          <views:DetailDrawerView DataContext="{Binding LogsPage}" />
+        </SplitView.Pane>
+        <views:LogGridView DataContext="{Binding LogsPage}" />
+      </SplitView>
+
+      <!-- Empty state CTA -->
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16"
+                  IsVisible="{Binding !IsIngesting}">
+        <StackPanel.Styles>
+          <Style Selector="StackPanel">
+            <!-- Only show when LogsPage is null -->
+          </Style>
+        </StackPanel.Styles>
+        <Button Content="📂 Add Files" HorizontalAlignment="Center"
+                Name="AddFilesButton" />
+      </StackPanel>
+
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                  IsVisible="{Binding IsIngesting}" Spacing="8">
+        <TextBlock Text="Ingesting..." FontSize="16"
+                   Foreground="{StaticResource Brush.SakuraPink}"
+                   HorizontalAlignment="Center" />
+      </StackPanel>
+    </Grid>
+  </DockPanel>
+
+</UserControl>
