@@ -3,7 +3,9 @@
              xmlns:vm="using:ItomoriLog.UI.ViewModels"
              xmlns:core="using:ItomoriLog.Core.Storage"
              x:Class="ItomoriLog.UI.Views.WelcomeView"
-             x:DataType="vm:WelcomeViewModel">
+             x:DataType="vm:WelcomeViewModel"
+             DragDrop.Drop="OnDrop"
+             DragDrop.DragOver="OnDragOver">
 
   <Grid ColumnDefinitions="*,*" Margin="24">
     <!-- Left: Create New Session -->

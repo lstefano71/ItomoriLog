@@ -1,12 +1,13 @@
 using DuckDB.NET.Data;
 using ItomoriLog.Core.Model;
+using System.Text;
 
 namespace ItomoriLog.Core.Ingest;
 
 public sealed class LogBatchInserter
 {
     private readonly DuckDBConnection _connection;
-    private const int BatchSize = 50_000;
+    private const int RowsPerStatement = 2_000;
 
     public LogBatchInserter(DuckDBConnection connection)
     {
@@ -17,31 +18,41 @@ public sealed class LogBatchInserter
     {
         if (rows.Count == 0) return;
 
-        for (int i = 0; i < rows.Count; i += BatchSize)
+        for (int i = 0; i < rows.Count; i += RowsPerStatement)
         {
-            var batch = rows.Skip(i).Take(BatchSize).ToList();
-            await InsertChunkAsync(batch, ct);
+            var count = Math.Min(RowsPerStatement, rows.Count - i);
+            await InsertChunkAsync(rows, i, count, ct);
         }
     }
 
-    private async Task InsertChunkAsync(IReadOnlyList<LogRow> rows, CancellationToken ct)
+    private async Task InsertChunkAsync(IReadOnlyList<LogRow> rows, int offset, int count, CancellationToken ct)
     {
-        using var cmd = _connection.CreateCommand();
-        cmd.CommandText = """
+        var sql = new StringBuilder("""
             INSERT INTO logs (
                 timestamp_utc, timestamp_basis, timestamp_effective_offset_minutes,
                 timestamp_original, logical_source_id, source_path,
                 physical_file_id, segment_id, ingest_run_id,
                 record_index, level, message, fields
-            ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
-            )
-            """;
+            ) VALUES
+            """);
 
-        foreach (var row in rows)
+        using var cmd = _connection.CreateCommand();
+
+        for (int i = 0; i < count; i++)
         {
             ct.ThrowIfCancellationRequested();
-            cmd.Parameters.Clear();
+
+            if (i > 0)
+                sql.Append(',');
+
+            var parameterBase = (i * 13) + 1;
+            sql.Append('(');
+            sql.Append($"${parameterBase}, ${parameterBase + 1}, ${parameterBase + 2}, ${parameterBase + 3}, ");
+            sql.Append($"${parameterBase + 4}, ${parameterBase + 5}, ${parameterBase + 6}, ${parameterBase + 7}, ");
+            sql.Append($"${parameterBase + 8}, ${parameterBase + 9}, ${parameterBase + 10}, ${parameterBase + 11}, ${parameterBase + 12}");
+            sql.Append(')');
+
+            var row = rows[offset + i];
             cmd.Parameters.Add(new DuckDBParameter { Value = row.TimestampUtc.UtcDateTime });
             cmd.Parameters.Add(new DuckDBParameter { Value = row.TimestampBasis.ToString() });
             cmd.Parameters.Add(new DuckDBParameter { Value = row.TimestampEffectiveOffsetMinutes });
@@ -55,7 +66,9 @@ public sealed class LogBatchInserter
             cmd.Parameters.Add(new DuckDBParameter { Value = (object?)row.Level ?? DBNull.Value });
             cmd.Parameters.Add(new DuckDBParameter { Value = row.Message });
             cmd.Parameters.Add(new DuckDBParameter { Value = (object?)row.FieldsJson ?? DBNull.Value });
-            await cmd.ExecuteNonQueryAsync(ct);
         }
+
+        cmd.CommandText = sql.ToString();
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 }

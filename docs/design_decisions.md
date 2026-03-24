@@ -63,9 +63,10 @@ Max **1 MB** per record (`IngestOptions.MaxRecordBytes = 1_048_576`). If exceede
 Staged progress pane, **not** a blocking wizard:
 1. File selection → parallel sniffing starts immediately
 2. Detection results stream in per file (format, confidence, preview, extracted fields)
-3. Auto-ingest starts for ≥95% confidence files while user reviews others
-4. User can override/edit any detection at any time → triggers re-ingest
-5. Principle: **never block the happy path**
+3. Files stay staged until the user explicitly starts ingestion
+4. Low-confidence or ambiguous detections require user confirmation before start
+5. User can override/edit any detection at any time → triggers re-ingest
+6. Principle: **never block the happy path**
 
 ### 1.14 File Change Detection (#27)
 On adding files to an existing session, compute `physical_file_id` and check against `segments` table. Options: **Skip** (default), **Re-ingest**, **Force add**. If file's `last_modified` changed since original ingest, flag it and suggest re-ingest.

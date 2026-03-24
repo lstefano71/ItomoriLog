@@ -15,7 +15,9 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            desktop.MainWindow = new MainWindow();
+            var vm = new ItomoriLog.UI.ViewModels.MainWindowViewModel();
+            vm.SetStartupArgs(desktop.Args);
+            desktop.MainWindow = new MainWindow { DataContext = vm };
         }
 
         base.OnFrameworkInitializationCompleted();

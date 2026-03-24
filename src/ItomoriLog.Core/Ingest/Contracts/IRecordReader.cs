@@ -10,4 +10,5 @@ public sealed record RawRecord(
     string FullText,
     long LineNumber,
     long ByteOffset,
-    IReadOnlyDictionary<string, string>? Fields = null);
+    IReadOnlyDictionary<string, string>? Fields = null,
+    long EndByteOffset = 0);

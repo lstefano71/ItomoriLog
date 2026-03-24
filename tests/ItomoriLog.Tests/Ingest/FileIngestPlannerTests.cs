@@ -124,6 +124,29 @@ public class FileIngestPlannerTests : IDisposable
         plan.FilesToIngest.Should().ContainSingle().Which.Should().Be(Path.GetFullPath(zipPath));
     }
 
+    [Fact]
+    public async Task PlanAsync_DirectoryInput_ExpandsRecursively()
+    {
+        var conn = await _factory.GetConnectionAsync();
+        await SchemaInitializer.EnsureSchemaAsync(conn);
+
+        var root = Path.Combine(_tempDir, "input_root");
+        var nested = Path.Combine(root, "nested");
+        Directory.CreateDirectory(nested);
+
+        var file1 = Path.Combine(root, "a.log");
+        var file2 = Path.Combine(nested, "b.log");
+        await File.WriteAllTextAsync(file1, "2024-01-01 00:00:00 INFO a\n");
+        await File.WriteAllTextAsync(file2, "2024-01-01 00:00:01 INFO b\n");
+
+        var planner = new FileIngestPlanner(conn);
+        var plan = await planner.PlanAsync([root], ExistingFileAction.Skip);
+
+        plan.FilesToIngest.Should().HaveCount(2);
+        plan.FilesToIngest.Should().Contain(Path.GetFullPath(file1));
+        plan.FilesToIngest.Should().Contain(Path.GetFullPath(file2));
+    }
+
     private static async Task InsertSegmentForFileAsync(
         DuckDBConnection conn,
         string segmentId,

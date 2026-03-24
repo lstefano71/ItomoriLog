@@ -114,6 +114,27 @@ WHERE session_id = $id;
 
 ***
 
+## Current implementation status (issues-001 alignment)
+
+Implemented in this repo:
+
+*   Welcome screen supports recent sessions, default title/timezone, and drag-and-drop paths to create a new session.
+*   Session shell supports staged files/folders, drag-and-drop, remove/clear, and explicit **Start Ingestion**.
+*   Background sniffing runs as soon as files are staged; low-confidence/ambiguous guesses require confirmation.
+*   Per-file/overall ingest progress is shown (bytes, records, throughput, ETA, phase) while browse view stays active.
+*   Post-ingest re-ingest is available per staged source and honors selected detection override.
+*   CLI MVP is available:
+    * `itomorilog ingest <paths...> [--session-out] [--session-title] [--session-description] [--default-timezone]`
+    * `itomorilog browse --session <path-to-ItomoriLog.duckdb>`
+*   Command palette is implemented and keyboard/search-as-you-type enabled.
+
+Known limits (still intentionally minimal):
+
+*   CLI `browse` currently prints session summary/sample rows to console; it does not open the desktop UI.
+*   Drag-and-drop currently uses Avalonia-obsolete `e.Data` API path (functional, with warnings) pending API migration.
+
+***
+
 ## Where do rules live? (carry‑over without dogma)
 
 *   **Per‑session rules** (what actually applied) remain inside the **session DB** (e.g., a `rules` table).

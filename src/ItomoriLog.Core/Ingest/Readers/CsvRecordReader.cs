@@ -17,13 +17,20 @@ public sealed class CsvRecordReader : IRecordReader
     private int _consecutiveBadRows;
     private int _consecutiveGoodRows;
     private SkipLogger.SkipSegment? _activeSkip;
+    private readonly Func<string, long> _byteCounter;
 
-    public CsvRecordReader(TextReader reader, CsvBoundary boundary, SkipLogger? skipLogger = null, int resyncThreshold = 5)
+    public CsvRecordReader(
+        TextReader reader,
+        CsvBoundary boundary,
+        SkipLogger? skipLogger = null,
+        int resyncThreshold = 5,
+        Func<string, long>? byteCounter = null)
     {
         _reader = reader;
         _boundary = boundary;
         _skipLogger = skipLogger;
         _resyncThreshold = resyncThreshold;
+        _byteCounter = byteCounter ?? DefaultByteCount;
 
         _columnNames = boundary.ColumnNames ?? [];
         _expectedColumnCount = _columnNames.Length;
@@ -35,7 +42,7 @@ public sealed class CsvRecordReader : IRecordReader
             if (headerLine is not null)
             {
                 _lineNumber++;
-                _byteOffset += Encoding.UTF8.GetByteCount(headerLine) + 1;
+                _byteOffset += _byteCounter(headerLine) + 1;
 
                 // If no column names were provided, parse them from the header
                 if (_expectedColumnCount == 0)
@@ -60,7 +67,7 @@ public sealed class CsvRecordReader : IRecordReader
             }
 
             _lineNumber++;
-            _byteOffset += Encoding.UTF8.GetByteCount(line) + 1;
+            _byteOffset += _byteCounter(line) + 1;
 
             if (string.IsNullOrWhiteSpace(line))
                 continue;
@@ -112,7 +119,13 @@ public sealed class CsvRecordReader : IRecordReader
                 fieldDict[_columnNames[i]] = fields[i];
             }
 
-            record = new RawRecord(line, line, _lineNumber, _byteOffset, fieldDict);
+            record = new RawRecord(
+                FirstLine: line,
+                FullText: line,
+                LineNumber: _lineNumber,
+                ByteOffset: _byteOffset,
+                Fields: fieldDict,
+                EndByteOffset: _byteOffset);
             return true;
         }
     }
@@ -182,4 +195,6 @@ public sealed class CsvRecordReader : IRecordReader
     }
 
     public void Dispose() { }
+
+    private static long DefaultByteCount(string line) => Encoding.UTF8.GetByteCount(line);
 }

@@ -16,12 +16,18 @@ public sealed class NdjsonRecordReader : IRecordReader
     private int _consecutiveBadRows;
     private int _consecutiveGoodRows;
     private SkipLogger.SkipSegment? _activeSkip;
+    private readonly Func<string, long> _byteCounter;
 
-    public NdjsonRecordReader(TextReader reader, JsonNdBoundary boundary, SkipLogger? skipLogger = null)
+    public NdjsonRecordReader(
+        TextReader reader,
+        JsonNdBoundary boundary,
+        SkipLogger? skipLogger = null,
+        Func<string, long>? byteCounter = null)
     {
         _reader = reader;
         _boundary = boundary;
         _skipLogger = skipLogger;
+        _byteCounter = byteCounter ?? DefaultByteCount;
     }
 
     public bool TryReadNext(out RawRecord record)
@@ -37,7 +43,7 @@ public sealed class NdjsonRecordReader : IRecordReader
             }
 
             _lineNumber++;
-            _byteOffset += Encoding.UTF8.GetByteCount(line) + 1;
+            _byteOffset += _byteCounter(line) + 1;
 
             if (string.IsNullOrWhiteSpace(line))
                 continue;
@@ -86,7 +92,13 @@ public sealed class NdjsonRecordReader : IRecordReader
                 CloseActiveSkip();
             }
 
-            record = new RawRecord(line, line, _lineNumber, _byteOffset, fields);
+            record = new RawRecord(
+                FirstLine: line,
+                FullText: line,
+                LineNumber: _lineNumber,
+                ByteOffset: _byteOffset,
+                Fields: fields,
+                EndByteOffset: _byteOffset);
             return true;
         }
     }
@@ -126,4 +138,6 @@ public sealed class NdjsonRecordReader : IRecordReader
     }
 
     public void Dispose() { }
+
+    private static long DefaultByteCount(string line) => Encoding.UTF8.GetByteCount(line);
 }

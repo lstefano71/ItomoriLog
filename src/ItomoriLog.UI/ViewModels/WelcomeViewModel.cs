@@ -9,10 +9,10 @@ namespace ItomoriLog.UI.ViewModels;
 public class WelcomeViewModel : ViewModelBase
 {
     private readonly MainWindowViewModel _main;
-    private string _sessionTitle = "";
+    private string _sessionTitle = SessionDefaults.BuildDefaultSessionTitle();
     private string _sessionDescription = "";
     private string _sessionPath;
-    private string _defaultTimezone = "";
+    private string _defaultTimezone = SessionDefaults.ResolveDefaultTimezone(null);
 
     public WelcomeViewModel(MainWindowViewModel main)
     {
@@ -21,6 +21,7 @@ public class WelcomeViewModel : ViewModelBase
         RecentSessions = new ObservableCollection<RecentSessionEntry>();
 
         CreateSessionCommand = ReactiveCommand.CreateFromTask(CreateSessionAsync);
+        CreateSessionFromDroppedPathsCommand = ReactiveCommand.CreateFromTask<IReadOnlyList<string>>(CreateSessionFromDroppedPathsAsync);
         RefreshRecentCommand = ReactiveCommand.CreateFromTask(RefreshRecentSessionsAsync);
         OpenSessionCommand = ReactiveCommand.Create<RecentSessionEntry>(entry =>
         {
@@ -58,13 +59,18 @@ public class WelcomeViewModel : ViewModelBase
     public ObservableCollection<RecentSessionEntry> RecentSessions { get; }
 
     public ReactiveCommand<Unit, Unit> CreateSessionCommand { get; }
+    public ReactiveCommand<IReadOnlyList<string>, Unit> CreateSessionFromDroppedPathsCommand { get; }
     public ReactiveCommand<Unit, Unit> RefreshRecentCommand { get; }
     public ReactiveCommand<RecentSessionEntry, Unit> OpenSessionCommand { get; }
 
     private async Task CreateSessionAsync()
     {
         if (string.IsNullOrWhiteSpace(SessionTitle))
-            return;
+            SessionTitle = SessionDefaults.BuildDefaultSessionTitle();
+
+        DefaultTimezone = SessionDefaults.ResolveDefaultTimezone(DefaultTimezone);
+        if (!SessionDefaults.IsValidTimezoneId(DefaultTimezone))
+            DefaultTimezone = TimeZoneInfo.Local.Id;
 
         var sessionFolder = SessionPaths.CreateNew(SessionPath, SessionTitle);
         var dbPath = SessionPaths.GetDbPath(sessionFolder);
@@ -81,6 +87,13 @@ public class WelcomeViewModel : ViewModelBase
         await globalStore.AddRecentSessionAsync(sessionFolder, SessionTitle, SessionDescription);
 
         _main.NavigateToSession(sessionFolder);
+    }
+
+    private async Task CreateSessionFromDroppedPathsAsync(IReadOnlyList<string> droppedPaths)
+    {
+        await CreateSessionAsync();
+        if (_main.CurrentView is SessionShellViewModel shell && droppedPaths.Count > 0)
+            shell.StageFilesCommand.Execute(droppedPaths).Subscribe();
     }
 
     private async Task RefreshRecentSessionsAsync()

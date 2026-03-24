@@ -45,6 +45,12 @@ public class MainWindowViewModel : ReactiveObject
                 {
                     // file picker is handled in MainWindow keybinding / shell view
                 }),
+            new PaletteCommand("Start Ingestion", "Start ingesting staged files and folders", "Ctrl+I",
+                () =>
+                {
+                    if (CurrentView is SessionShellViewModel session)
+                        session.StartIngestionCommand.Execute().Subscribe();
+                }),
             new PaletteCommand("Go to Skips", "View skipped records from ingestion", null,
                 () => { }),
             new PaletteCommand("About", "About ItomoriLog", null,
@@ -55,6 +61,8 @@ public class MainWindowViewModel : ReactiveObject
             .OfType<SessionShellViewModel>()
             .Subscribe(session => ExportDialog.BindSession(session));
     }
+
+    public string[] StartupArgs { get; private set; } = [];
 
     public ViewModelBase CurrentView
     {
@@ -78,5 +86,10 @@ public class MainWindowViewModel : ReactiveObject
         if (CurrentView is SessionShellViewModel currentSession)
             currentSession.ReleaseSessionLock();
         CurrentView = new WelcomeViewModel(this);
+    }
+
+    public void SetStartupArgs(string[]? args)
+    {
+        StartupArgs = args ?? [];
     }
 }

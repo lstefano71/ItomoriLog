@@ -10,7 +10,6 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        DataContext = new MainWindowViewModel();
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -60,6 +59,17 @@ public partial class MainWindow : Window
                     .OfType<ItomoriLog.UI.Views.SessionShellView>()
                     .FirstOrDefault();
                 shell?.OpenFilePicker();
+                e.Handled = true;
+                return;
+            }
+        }
+
+        // Ctrl+I: Start staged ingestion in active session
+        if (e.Key == Key.I && e.KeyModifiers == KeyModifiers.Control)
+        {
+            if (vm.CurrentView is SessionShellViewModel session)
+            {
+                session.StartIngestionCommand.Execute().Subscribe();
                 e.Handled = true;
                 return;
             }

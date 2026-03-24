@@ -36,17 +36,17 @@ public sealed class FileIngestPlanner
         var segmentsToReingest = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var skippedFiles = new List<PlannedFileSkip>();
 
-        foreach (var rawPath in filePaths)
+        foreach (var expandedPath in ExpandInputPaths(filePaths, skippedFiles))
         {
             ct.ThrowIfCancellationRequested();
 
-            if (rawPath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            if (expandedPath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
             {
-                filesToIngest.Add(Path.GetFullPath(rawPath));
+                filesToIngest.Add(Path.GetFullPath(expandedPath));
                 continue;
             }
 
-            var path = Path.GetFullPath(rawPath);
+            var path = Path.GetFullPath(expandedPath);
             if (!File.Exists(path))
             {
                 skippedFiles.Add(new PlannedFileSkip(path, "File does not exist"));
@@ -97,6 +97,50 @@ public sealed class FileIngestPlanner
             FilesToIngest: filesToIngest.ToArray(),
             SegmentsToReingest: segmentsToReingest.ToArray(),
             SkippedFiles: skippedFiles);
+    }
+
+    private static IEnumerable<string> ExpandInputPaths(IReadOnlyList<string> inputPaths, List<PlannedFileSkip> skippedFiles)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var rawPath in inputPaths)
+        {
+            if (string.IsNullOrWhiteSpace(rawPath))
+                continue;
+
+            var fullPath = Path.GetFullPath(rawPath);
+            if (File.Exists(fullPath))
+            {
+                if (seen.Add(fullPath))
+                    yield return fullPath;
+                continue;
+            }
+
+            if (Directory.Exists(fullPath))
+            {
+                IEnumerable<string> files;
+                try
+                {
+                    files = Directory.EnumerateFiles(fullPath, "*", SearchOption.AllDirectories);
+                }
+                catch (Exception ex)
+                {
+                    skippedFiles.Add(new PlannedFileSkip(fullPath, $"Directory expansion failed: {ex.Message}"));
+                    continue;
+                }
+
+                foreach (var file in files)
+                {
+                    var expanded = Path.GetFullPath(file);
+                    if (seen.Add(expanded))
+                        yield return expanded;
+                }
+                continue;
+            }
+
+            if (seen.Add(fullPath))
+                yield return fullPath;
+        }
     }
 
     private static void ApplyExistingFileAction(

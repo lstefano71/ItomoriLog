@@ -11,6 +11,7 @@ public class CommandPaletteViewModelTests
         new("Open Session", "Open an existing session", "Ctrl+O", () => { }),
         new("Export...", "Export data", null, () => { }),
         new("Toggle Detail Panel", "Show/hide detail", "Ctrl+D", () => { }),
+        new("Start Ingestion", "Start staged ingestion", "Ctrl+I", () => { }),
         new("Go to Skips", "View skipped records", null, () => { }),
         new("About", "About ItomoriLog", null, () => { }),
     ];
@@ -20,7 +21,7 @@ public class CommandPaletteViewModelTests
     {
         var vm = new CommandPaletteViewModel(SampleCommands());
 
-        vm.FilteredCommands.Should().HaveCount(6);
+        vm.FilteredCommands.Should().HaveCount(7);
         vm.IsOpen.Should().BeFalse();
     }
 
@@ -70,7 +71,7 @@ public class CommandPaletteViewModelTests
         vm.SearchText = "ns";
         vm.SearchText = "";
 
-        vm.FilteredCommands.Should().HaveCount(6);
+        vm.FilteredCommands.Should().HaveCount(7);
     }
 
     [Fact]

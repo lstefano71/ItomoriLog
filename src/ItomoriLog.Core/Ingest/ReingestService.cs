@@ -22,7 +22,8 @@ public sealed class ReingestService
     public async Task<ReingestResult> ReingestSegmentAsync(
         string segmentId,
         TimeBasisConfig defaultTimeBasis,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        DetectionResult? overrideDetection = null)
     {
         // 1. Load segment metadata
         var segment = await LoadSegmentAsync(segmentId, ct);
@@ -43,11 +44,14 @@ public sealed class ReingestService
             await fs.CopyToAsync(fileStream, ct);
         fileStream.Position = 0;
 
-        var engineResult = _detectionEngine.Detect(fileStream, Path.GetFileName(sourcePath));
-        if (engineResult.Detection is null)
-            return ReingestResult.Failed(segmentId, "Format could not be detected on re-ingest");
-
-        var detection = engineResult.Detection;
+        var detection = overrideDetection;
+        if (detection is null)
+        {
+            var engineResult = _detectionEngine.Detect(fileStream, Path.GetFileName(sourcePath));
+            if (engineResult.Detection is null)
+                return ReingestResult.Failed(segmentId, "Format could not be detected on re-ingest");
+            detection = engineResult.Detection;
+        }
 
         // 4. Read all records
         fileStream.Position = 0;
