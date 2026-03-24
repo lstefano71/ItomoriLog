@@ -4,6 +4,8 @@ using ReactiveUI;
 using ItomoriLog.Core.Model;
 using ItomoriLog.Core.Storage;
 using ItomoriLog.Core.Ingest;
+using ItomoriLog.Core.Export;
+using ItomoriLog.Core.Query;
 
 namespace ItomoriLog.UI.ViewModels;
 
@@ -20,6 +22,9 @@ public class SessionShellViewModel : ViewModelBase
     private LogsPageViewModel? _logsPage;
     private TimelineViewModel? _timeline;
     private FacetPanelViewModel? _facetPanel;
+    private CrashRecoveryViewModel? _crashRecovery;
+    private CrashRecoveryService? _crashRecoveryService;
+    private ExistingFileAction _existingFileAction = ExistingFileAction.Skip;
 
     /// <summary>
     /// When detection confidence is at or above this threshold, auto-ingest proceeds
@@ -32,7 +37,11 @@ public class SessionShellViewModel : ViewModelBase
         _main = main;
         _sessionFolder = sessionFolder;
 
-        CloseSessionCommand = ReactiveCommand.Create(() => _main.NavigateToWelcome());
+        CloseSessionCommand = ReactiveCommand.Create(() =>
+        {
+            ReleaseSessionLock();
+            _main.NavigateToWelcome();
+        });
         IngestFilesCommand = ReactiveCommand.CreateFromTask<IReadOnlyList<string>>(IngestFilesAsync);
 
         // Load session header
@@ -77,6 +86,12 @@ public class SessionShellViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _isIngesting, value);
     }
 
+    public ExistingFileAction ExistingFileAction
+    {
+        get => _existingFileAction;
+        set => this.RaiseAndSetIfChanged(ref _existingFileAction, value);
+    }
+
     public LogsPageViewModel? LogsPage
     {
         get => _logsPage;
@@ -93,6 +108,12 @@ public class SessionShellViewModel : ViewModelBase
     {
         get => _facetPanel;
         set => this.RaiseAndSetIfChanged(ref _facetPanel, value);
+    }
+
+    public CrashRecoveryViewModel? CrashRecovery
+    {
+        get => _crashRecovery;
+        set => this.RaiseAndSetIfChanged(ref _crashRecovery, value);
     }
 
     public ReactiveCommand<Unit, Unit> CloseSessionCommand { get; }
@@ -113,6 +134,7 @@ public class SessionShellViewModel : ViewModelBase
     {
         var dbPath = SessionPaths.GetDbPath(_sessionFolder);
         using var factory = new DuckLakeConnectionFactory(dbPath);
+        _crashRecoveryService = new CrashRecoveryService(_sessionFolder);
         var store = new SessionStore(factory);
         var header = await store.ReadHeaderAsync();
         if (header is not null)
@@ -132,6 +154,20 @@ public class SessionShellViewModel : ViewModelBase
             RecordCount = Convert.ToInt64(count);
         }
         catch { RecordCount = 0; }
+
+        var recoveryStatus = await _crashRecoveryService.CheckAsync(conn);
+        _crashRecoveryService.AcquireLock();
+        CrashRecovery = new CrashRecoveryViewModel(
+            recoveryStatus,
+            onResume: () =>
+            {
+                _ = Task.Run(async () =>
+                {
+                    await _crashRecoveryService.MarkRunsAbandonedAsync(conn);
+                    _crashRecoveryService.AcquireLock();
+                });
+            },
+            onDismiss: () => { });
 
         StatusText = $"{RecordCount:N0} records | {_sessionFolder}";
 
@@ -164,10 +200,12 @@ public class SessionShellViewModel : ViewModelBase
         };
 
         // Facet selection changes → FilterState levels/sources on LogsPage
-        FacetPanel.SelectionChanged += (levels, sources) =>
+        FacetPanel.SelectionChanged += (levels, excludedLevels, sources, excludedSources) =>
         {
             LogsPage.SelectedLevels = new System.Collections.ObjectModel.ObservableCollection<string>(levels);
+            LogsPage.ExcludedLevels = new System.Collections.ObjectModel.ObservableCollection<string>(excludedLevels);
             LogsPage.SelectedSources = new System.Collections.ObjectModel.ObservableCollection<string>(sources);
+            LogsPage.ExcludedSources = new System.Collections.ObjectModel.ObservableCollection<string>(excludedSources);
         };
     }
 
@@ -184,46 +222,80 @@ public class SessionShellViewModel : ViewModelBase
             using var factory = new DuckLakeConnectionFactory(dbPath);
             var conn = await factory.GetConnectionAsync();
             await SchemaInitializer.EnsureSchemaAsync(conn);
-
             var defaultTz = new TimeBasisConfig(TimeBasis.Local);
+
+            var planner = new FileIngestPlanner(conn);
+            var plan = await planner.PlanAsync(filePaths, ExistingFileAction, CancellationToken.None);
+
+            foreach (var skipped in plan.SkippedFiles)
+            {
+                StatusText = $"Skipped: {Path.GetFileName(skipped.SourcePath)} ({skipped.Reason})";
+            }
+
+            foreach (var segmentId in plan.SegmentsToReingest)
+            {
+                var reingest = new ReingestService(conn);
+                var reingestResult = await reingest.ReingestSegmentAsync(segmentId, defaultTz, CancellationToken.None);
+                if (!reingestResult.Success)
+                {
+                    StatusText = $"Re-ingest failed for segment {segmentId}: {reingestResult.Error}";
+                }
+            }
+
+            if (plan.FilesToIngest.Count == 0 && plan.SegmentsToReingest.Count > 0)
+            {
+                StatusText = $"{RecordCount:N0} records | Re-ingested {plan.SegmentsToReingest.Count} segment(s) | {_sessionFolder}";
+                if (Timeline is not null) await Timeline.LoadCoarseBinsAsync();
+                if (FacetPanel is not null) { FacetPanel.InvalidateCache(); await FacetPanel.RefreshAsync(); }
+                return;
+            }
+
+            if (plan.FilesToIngest.Count == 0)
+            {
+                StatusText = $"{RecordCount:N0} records | No new files to ingest | {_sessionFolder}";
+                return;
+            }
+
             var detectionEngine = new DetectionEngine();
 
             // Pre-detect to check confidence for auto-ingest
-            var allHighConfidence = true;
-            foreach (var path in filePaths)
+            var candidates = await BuildDetectionCandidatesAsync(plan.FilesToIngest, detectionEngine);
+            var allHighConfidence = candidates.All(c => ShouldAutoIngest(c.EngineResult));
+            if (!allHighConfidence && candidates.Count > 0)
             {
-                if (path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-                    continue; // ZIP files always auto-processed
+                var wizard = new DetectionWizardViewModel(
+                    candidates.Select(c => c.Candidate).ToList(),
+                    candidate => candidate.PreviewLines ?? ["(preview unavailable)"]);
+                var tcs = new TaskCompletionSource<DetectionCandidate?>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
 
-                using var sniffStream = new MemoryStream();
-                using (var fs = File.OpenRead(path))
+                using var confirmSub = wizard.ConfirmCommand.Subscribe(selected =>
                 {
-                    var buffer = new byte[Math.Min(fs.Length, 256 * 1024)];
-                    var bytesRead = await fs.ReadAsync(buffer);
-                    sniffStream.Write(buffer, 0, bytesRead);
-                }
-                sniffStream.Position = 0;
-
-                var engineResult = detectionEngine.Detect(sniffStream, Path.GetFileName(path));
-                if (!ShouldAutoIngest(engineResult))
+                    _main.CurrentView = this;
+                    tcs.TrySetResult(selected);
+                });
+                using var cancelSub = wizard.CancelCommand.Subscribe(_ =>
                 {
-                    allHighConfidence = false;
-                    break;
-                }
-            }
+                    _main.CurrentView = this;
+                    tcs.TrySetResult(null);
+                });
 
-            if (!allHighConfidence)
-            {
-                StatusText = "Detection confidence below threshold — wizard recommended";
-                // In a full implementation, this would navigate to DetectionWizardView.
-                // Proceed with standard ingest as graceful degradation.
+                _main.CurrentView = wizard;
+                var selected = await tcs.Task;
+
+                if (selected is null)
+                {
+                    StatusText = "Ingest cancelled from detection wizard.";
+                    return;
+                }
             }
 
             var orchestrator = new IngestOrchestrator(conn);
-            var result = await orchestrator.IngestFilesAsync(filePaths, defaultTz);
+            var result = await orchestrator.IngestFilesAsync(plan.FilesToIngest, defaultTz);
 
             RecordCount += result.TotalRows;
-            StatusText = $"{RecordCount:N0} records | {result.FilesProcessed} files ingested, {result.Skips.Count} skips | {_sessionFolder}";
+            StatusText =
+                $"{RecordCount:N0} records | {result.FilesProcessed} files ingested, {plan.SegmentsToReingest.Count} segments re-ingested, {result.Skips.Count + plan.SkippedFiles.Count} skips | {_sessionFolder}";
 
             // Update global store
             using var globalStore = new GlobalStore();
@@ -242,4 +314,88 @@ public class SessionShellViewModel : ViewModelBase
             IsIngesting = false;
         }
     }
+
+    private static async Task<List<(EngineResult EngineResult, DetectionCandidate Candidate)>> BuildDetectionCandidatesAsync(
+        IReadOnlyList<string> filePaths,
+        DetectionEngine detectionEngine)
+    {
+        var candidates = new List<(EngineResult EngineResult, DetectionCandidate Candidate)>();
+        foreach (var path in filePaths.Where(p => !p.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)))
+        {
+            using var sniffStream = new MemoryStream();
+            await using (var fs = File.OpenRead(path))
+            {
+                var buffer = new byte[Math.Min(fs.Length, 256 * 1024)];
+                var bytesRead = await fs.ReadAsync(buffer);
+                sniffStream.Write(buffer, 0, bytesRead);
+            }
+            sniffStream.Position = 0;
+
+            var engineResult = detectionEngine.Detect(sniffStream, Path.GetFileName(path));
+            if (engineResult.Detection is null)
+                continue;
+
+            candidates.Add((engineResult, new DetectionCandidate(
+                FormatName: engineResult.Detection.Boundary.GetType().Name.Replace("Boundary", ""),
+                Confidence: engineResult.Detection.Confidence,
+                Detection: engineResult.Detection,
+                SourcePath: path,
+                PreviewLines: await ReadPreviewLinesAsync(path))));
+        }
+
+        return candidates
+            .OrderByDescending(c => c.Candidate.Confidence)
+            .ToList();
+    }
+
+    private static async Task<IReadOnlyList<string>> ReadPreviewLinesAsync(string path)
+    {
+        var result = new List<string>();
+        await using var fs = File.OpenRead(path);
+        using var reader = new StreamReader(fs);
+        while (result.Count < 5)
+        {
+            var line = await reader.ReadLineAsync();
+            if (line is null)
+                break;
+            if (!string.IsNullOrWhiteSpace(line))
+                result.Add(line);
+        }
+
+        return result.Count > 0 ? result : ["(no records parsed)"];
+    }
+
+    public FilterState BuildCurrentFilterState()
+    {
+        if (LogsPage is null)
+            return FilterState.Empty;
+        return LogsPage.BuildCurrentFilterState();
+    }
+
+    public ExportOptions BuildExportOptions(ExportScope scope, ExportFormat format, string outputPath)
+    {
+        var filter = scope == ExportScope.CurrentView ? BuildCurrentFilterState() : null;
+        return new ExportOptions(
+            Format: format,
+            OutputPath: outputPath,
+            Filter: filter,
+            Scope: scope,
+            SessionTitle: Title,
+            SessionDescription: Description,
+            SessionFolder: SessionFolder);
+    }
+
+    public async Task<long> ExecuteExportAsync(
+        ExportOptions options,
+        IProgress<ExportProgress> progress,
+        CancellationToken ct)
+    {
+        var dbPath = SessionPaths.GetDbPath(_sessionFolder);
+        using var factory = new DuckLakeConnectionFactory(dbPath);
+        var conn = await factory.GetConnectionAsync(ct);
+        var service = new ExportService(conn);
+        return await service.ExportAsync(options, progress, ct);
+    }
+
+    public void ReleaseSessionLock() => _crashRecoveryService?.ReleaseLock();
 }

@@ -1,4 +1,6 @@
 using ReactiveUI;
+using System.Reactive.Linq;
+using System;
 
 namespace ItomoriLog.UI.ViewModels;
 
@@ -20,14 +22,38 @@ public class MainWindowViewModel : ReactiveObject
             new PaletteCommand("Open Session", "Open a recent session", "Ctrl+O",
                 () => NavigateToWelcome()),
             new PaletteCommand("Export...", "Export current session data", "Ctrl+E",
-                () => ExportDialog.Open()),
+                () =>
+                {
+                    if (CurrentView is SessionShellViewModel session)
+                        ExportDialog.BindSession(session);
+                    ExportDialog.Open();
+                }),
             new PaletteCommand("Toggle Detail Panel", "Show or hide the log detail panel", "Ctrl+D",
-                () => { }),
+                () =>
+                {
+                    if (CurrentView is SessionShellViewModel session && session.LogsPage is { } logs)
+                        logs.IsDetailOpen = !logs.IsDetailOpen;
+                }),
+            new PaletteCommand("Refresh", "Refresh current results", "F5",
+                () =>
+                {
+                    if (CurrentView is SessionShellViewModel session && session.LogsPage is { } logs)
+                        logs.RefreshCommand.Execute().Subscribe();
+                }),
+            new PaletteCommand("Add Files...", "Open file picker to ingest more logs", "Ctrl+O",
+                () =>
+                {
+                    // file picker is handled in MainWindow keybinding / shell view
+                }),
             new PaletteCommand("Go to Skips", "View skipped records from ingestion", null,
                 () => { }),
             new PaletteCommand("About", "About ItomoriLog", null,
                 () => AboutDialog.Toggle()),
         ]);
+
+        this.WhenAnyValue(x => x.CurrentView)
+            .OfType<SessionShellViewModel>()
+            .Subscribe(session => ExportDialog.BindSession(session));
     }
 
     public ViewModelBase CurrentView
@@ -42,11 +68,15 @@ public class MainWindowViewModel : ReactiveObject
 
     public void NavigateToSession(string sessionFolder)
     {
+        if (CurrentView is SessionShellViewModel currentSession)
+            currentSession.ReleaseSessionLock();
         CurrentView = new SessionShellViewModel(this, sessionFolder);
     }
 
     public void NavigateToWelcome()
     {
+        if (CurrentView is SessionShellViewModel currentSession)
+            currentSession.ReleaseSessionLock();
         CurrentView = new WelcomeViewModel(this);
     }
 }

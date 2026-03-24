@@ -64,6 +64,9 @@ public class ExportServiceTests : IDisposable
         lines.Length.Should().Be(11); // 1 header + 10 data rows
         lines[0].Should().StartWith("timestamp_utc,timestamp_basis,");
         lines[0].Should().Contain("message,fields");
+
+        var metadataPath = ExportService.BuildCsvMetadataPath(outputPath);
+        File.Exists(metadataPath).Should().BeTrue();
     }
 
     [Fact]
@@ -246,6 +249,57 @@ public class ExportServiceTests : IDisposable
 
         progressReports.Should().NotBeEmpty();
         progressReports.Last().Status.Should().Contain("complete");
+    }
+
+    [Fact]
+    public async Task ExportCsv_FullSession_IgnoresFilter()
+    {
+        var conn = await SetupDbWithRowsAsync(12);
+        var service = new ExportService(conn);
+        var outputPath = Path.Combine(_tempDir, "export_full_scope.csv");
+
+        var filter = new FilterState { Levels = ["ERROR"] };
+        var count = await service.ExportAsync(
+            new ExportOptions(ExportFormat.Csv, outputPath, filter, Scope: ExportScope.FullSession));
+
+        count.Should().Be(12);
+    }
+
+    [Fact]
+    public async Task ExportParquet_WritesSessionMetadata()
+    {
+        var conn = await SetupDbWithRowsAsync(3);
+        var service = new ExportService(conn);
+        var outputPath = Path.Combine(_tempDir, "export_kv.parquet");
+        var escapedPath = outputPath.Replace("\\", "/");
+
+        await service.ExportAsync(new ExportOptions(
+            ExportFormat.Parquet,
+            outputPath,
+            Scope: ExportScope.CurrentView,
+            SessionTitle: "Session X",
+            SessionDescription: "Desc",
+            SessionFolder: "C:\\sessions\\x"));
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT CAST("key" AS VARCHAR), CAST("value" AS VARCHAR)
+            FROM parquet_kv_metadata('{escapedPath}')
+            WHERE "key" IS NOT NULL
+            """;
+        using var reader = await cmd.ExecuteReaderAsync();
+        var kv = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        while (await reader.ReadAsync())
+        {
+            var key = reader.GetString(0);
+            var value = reader.GetString(1);
+            kv[key] = value;
+        }
+
+        kv.Should().ContainKey("session_title");
+        kv["session_title"].Should().Be("Session X");
+        kv.Should().ContainKey("session_folder");
+        kv.Should().ContainKey("export_scope");
     }
 
     [Fact]

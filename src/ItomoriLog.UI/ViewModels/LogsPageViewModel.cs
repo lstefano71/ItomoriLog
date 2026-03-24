@@ -13,11 +13,15 @@ public class LogsPageViewModel : ViewModelBase
     private readonly DuckLakeConnectionFactory _factory;
     private readonly RowPager _pager;
     private readonly QueryPlanner _planner;
+    private readonly SearchQueryParser _searchParser = new();
 
     private string _queryText = "";
     private string? _textSearch;
+    private string? _queryParseError;
     private ObservableCollection<string> _selectedSources = [];
+    private ObservableCollection<string> _excludedSources = [];
     private ObservableCollection<string> _selectedLevels = [];
+    private ObservableCollection<string> _excludedLevels = [];
     private DateTimeOffset? _startUtc;
     private DateTimeOffset? _endUtc;
     private ObservableCollection<LogRowDto> _currentPage = [];
@@ -75,16 +79,34 @@ public class LogsPageViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _textSearch, value);
     }
 
+    public string? QueryParseError
+    {
+        get => _queryParseError;
+        private set => this.RaiseAndSetIfChanged(ref _queryParseError, value);
+    }
+
     public ObservableCollection<string> SelectedSources
     {
         get => _selectedSources;
         set => this.RaiseAndSetIfChanged(ref _selectedSources, value);
     }
 
+    public ObservableCollection<string> ExcludedSources
+    {
+        get => _excludedSources;
+        set => this.RaiseAndSetIfChanged(ref _excludedSources, value);
+    }
+
     public ObservableCollection<string> SelectedLevels
     {
         get => _selectedLevels;
         set => this.RaiseAndSetIfChanged(ref _selectedLevels, value);
+    }
+
+    public ObservableCollection<string> ExcludedLevels
+    {
+        get => _excludedLevels;
+        set => this.RaiseAndSetIfChanged(ref _excludedLevels, value);
     }
 
     public DateTimeOffset? StartUtc
@@ -160,21 +182,38 @@ public class LogsPageViewModel : ViewModelBase
 
     private FilterState BuildFilter()
     {
-        string? tickExpr = null;
-        // Check if QueryText contains a TICK expression
-        if (!string.IsNullOrWhiteSpace(QueryText))
-            tickExpr = QueryText;
+        var parsed = _searchParser.Parse(QueryText);
+        QueryParseError = parsed.Error;
+        if (parsed.Error is not null)
+        {
+            return new FilterState
+            {
+                StartUtc = StartUtc,
+                EndUtc = EndUtc,
+                SourceIds = SelectedSources.ToList(),
+                ExcludedSourceIds = ExcludedSources.ToList(),
+                Levels = SelectedLevels.ToList(),
+                ExcludedLevels = ExcludedLevels.ToList(),
+                TextSearch = TextSearch,
+                TickExpression = null
+            };
+        }
 
         return new FilterState
         {
             StartUtc = StartUtc,
             EndUtc = EndUtc,
             SourceIds = SelectedSources.ToList(),
+            ExcludedSourceIds = ExcludedSources.ToList(),
             Levels = SelectedLevels.ToList(),
-            TextSearch = TextSearch,
-            TickExpression = tickExpr
+            ExcludedLevels = ExcludedLevels.ToList(),
+            TextSearch = parsed.MessageQuery is null ? TextSearch : null,
+            TextSearchQuery = parsed.MessageQuery,
+            TickExpression = parsed.TickExpression
         };
     }
+
+    public FilterState BuildCurrentFilterState() => BuildFilter();
 
     private async Task RefreshAsync()
     {
@@ -212,6 +251,17 @@ public class LogsPageViewModel : ViewModelBase
         try
         {
             var filter = BuildFilter();
+            if (QueryParseError is not null)
+            {
+                StatusText = $"Query parse error: {QueryParseError}";
+                CurrentPage = [];
+                _prevCursor = null;
+                _nextCursor = null;
+                HasNextPage = false;
+                HasPreviousPage = CurrentPageIndex > 0 || _backwardCursors.Count > 0;
+                return;
+            }
+
             var result = await _pager.FetchPageAsync(filter, cursor, direction);
 
             var dtos = result.Rows.Select(ProjectToDto).ToList();

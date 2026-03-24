@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using DuckDB.NET.Data;
 using ItomoriLog.Core.Model;
@@ -33,6 +32,7 @@ public sealed class IngestOrchestrator
         var tracker = new IngestRunTracker(_connection);
         var runId = await tracker.StartRunAsync(ct);
         var skipSink = new ListSkipSink();
+        var segmentRows = new List<SegmentUpsertRow>();
         var totalRows = 0L;
         var filesProcessed = 0;
 
@@ -99,7 +99,20 @@ public sealed class IngestOrchestrator
                 await semaphore.WaitAsync(ct);
                 try
                 {
-                    await ProcessFileAsync(entry, runId, defaultTimeBasis, skipSink, channel.Writer, ct);
+                    var segmentRow = await ProcessFileAsync(
+                        entry,
+                        runId,
+                        defaultTimeBasis,
+                        skipSink,
+                        channel.Writer,
+                        ct);
+                    if (segmentRow is not null)
+                    {
+                        lock (segmentRows)
+                        {
+                            segmentRows.Add(segmentRow);
+                        }
+                    }
                     Interlocked.Increment(ref filesProcessed);
                 }
                 finally
@@ -112,6 +125,20 @@ public sealed class IngestOrchestrator
             channel.Writer.Complete();
             await writerTask;
 
+            var snapshotSegments = segmentRows.ToArray();
+            if (snapshotSegments.Length > 0)
+            {
+                var segmentUpserter = new SegmentUpserter(_connection);
+                await segmentUpserter.UpsertBatchAsync(snapshotSegments, ct);
+            }
+
+            var skipRows = skipSink.GetSkips();
+            if (skipRows.Count > 0)
+            {
+                var skipInserter = new SkipBatchInserter(_connection);
+                await skipInserter.InsertBatchAsync(skipRows, sessionId: null, ct);
+            }
+
             await tracker.CompleteRunAsync(runId, ct);
 
             return new IngestResult(
@@ -121,7 +148,7 @@ public sealed class IngestOrchestrator
                 Skips: skipSink.GetSkips(),
                 Status: "completed");
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception) when (ct.IsCancellationRequested is false)
         {
             try { await tracker.CompleteRunAsync(runId, ct); } catch { }
             return new IngestResult(runId, Interlocked.Read(ref totalRows), filesProcessed,
@@ -129,7 +156,7 @@ public sealed class IngestOrchestrator
         }
     }
 
-    private async Task ProcessFileAsync(
+    private async Task<SegmentUpsertRow?> ProcessFileAsync(
         FileToIngest entry,
         string runId,
         TimeBasisConfig timeBasis,
@@ -138,49 +165,79 @@ public sealed class IngestOrchestrator
         CancellationToken ct)
     {
         using var stream = entry.OpenStream();
+        var canonicalSourcePath = CanonicalizeSourcePath(entry.SourcePath);
+        var logicalSourceId = IdentityGenerator.LogicalSourceId(entry.FileName);
+        var lastModifiedUtc = ResolveLastModifiedUtc(canonicalSourcePath, entry.isZipEntry);
 
         // Detect format
         var engineResult = _detectionEngine.Detect(stream, entry.FileName);
         if (engineResult.Detection is null)
         {
+            var failedPhysicalFileId = IdentityGenerator.PhysicalFileId(
+                canonicalSourcePath,
+                stream.Length,
+                lastModifiedUtc);
+            var failedSegmentId = IdentityGenerator.SegmentId(failedPhysicalFileId);
+
             skipSink.Write(new SkipRow(
-                LogicalSourceId: IdentityGenerator.LogicalSourceId(entry.FileName),
-                PhysicalFileId: "unknown",
-                SegmentId: "unknown",
+                LogicalSourceId: logicalSourceId,
+                PhysicalFileId: failedPhysicalFileId,
+                SegmentId: failedSegmentId,
                 SegmentSeq: 0,
                 StartLine: null, EndLine: null, StartOffset: null, EndOffset: null,
                 ReasonCode: SkipReasonCode.NotRecognized,
                 ReasonDetail: $"No viable format detected for {entry.FileName}",
                 SamplePrefix: null, DetectorProfileId: null,
                 UtcLoggedAt: DateTimeOffset.UtcNow));
-            return;
+
+            var failedSourcePath = canonicalSourcePath;
+            var failedFileSize = stream.Length;
+            var failedFileHash = await ComputeStreamHashAsync(stream, ct);
+
+            return new SegmentUpsertRow(
+                SegmentId: failedSegmentId,
+                LogicalSourceId: logicalSourceId,
+                PhysicalFileId: failedPhysicalFileId,
+                MinTsUtc: null,
+                MaxTsUtc: null,
+                RowCount: 0,
+                LastIngestRunId: runId,
+                Active: true,
+                LastByteOffset: 0,
+                SourcePath: failedSourcePath,
+                FileSizeBytes: failedFileSize,
+                LastModifiedUtc: lastModifiedUtc,
+                FileHash: failedFileHash);
         }
 
         var detection = engineResult.Detection;
-        var logicalSourceId = IdentityGenerator.LogicalSourceId(entry.FileName);
 
         // Generate identity
         var physicalFileId = IdentityGenerator.PhysicalFileId(
-            entry.SourcePath, stream.Length, DateTimeOffset.UtcNow);
+            canonicalSourcePath, stream.Length, lastModifiedUtc);
         var segmentId = IdentityGenerator.SegmentId(physicalFileId);
 
         var skipLogger = new SkipLogger(skipSink, logicalSourceId, physicalFileId, segmentId);
 
         // Create reader based on boundary type
         stream.Position = 0;
-        var textReader = new StreamReader(stream);
+        var encoding = EncodingDetector.Detect(stream);
+        stream.Position = 0;
+        var textReader = new StreamReader(stream, encoding, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
         using var recordReader = CreateReader(detection.Boundary, textReader, skipLogger);
 
         // Read and batch records
         var batch = new List<LogRow>(50_000);
         long recordIndex = 0;
         var synthesizer = new FieldSynthesizer();
+        DateTimeOffset? minTs = null;
+        DateTimeOffset? maxTs = null;
 
         while (recordReader.TryReadNext(out var raw))
         {
             ct.ThrowIfCancellationRequested();
 
-            if (!detection.Extractor.TryExtract(raw, out var timestamp))
+            if (!TimestampResolver.TryResolve(detection.Extractor, raw, timeBasis, out var resolvedTimestamp))
             {
                 var seg = skipLogger.BeginSkip(SkipReasonCode.TimeParse,
                     "Timestamp extraction failed", startLine: raw.LineNumber);
@@ -188,8 +245,10 @@ public sealed class IngestOrchestrator
                 continue;
             }
 
-            var utcTimestamp = TimezonePolicy.ApplyTimeBasis(timestamp, timeBasis);
-            var offsetMinutes = (int)timestamp.Offset.TotalMinutes;
+            var utcTimestamp = resolvedTimestamp.UtcTimestamp;
+            var offsetMinutes = resolvedTimestamp.EffectiveOffsetMinutes;
+            minTs = minTs.HasValue && minTs.Value <= utcTimestamp ? minTs : utcTimestamp;
+            maxTs = maxTs.HasValue && maxTs.Value >= utcTimestamp ? maxTs : utcTimestamp;
 
             // Field synthesis
             string? level = null;
@@ -231,11 +290,11 @@ public sealed class IngestOrchestrator
 
             batch.Add(new LogRow(
                 TimestampUtc: utcTimestamp,
-                TimestampBasis: timeBasis.Basis,
+                TimestampBasis: resolvedTimestamp.Basis,
                 TimestampEffectiveOffsetMinutes: offsetMinutes,
-                TimestampOriginal: raw.FirstLine[..Math.Min(raw.FirstLine.Length, 50)],
+                TimestampOriginal: resolvedTimestamp.TimestampOriginal ?? raw.FirstLine[..Math.Min(raw.FirstLine.Length, 50)],
                 LogicalSourceId: logicalSourceId,
-                SourcePath: entry.SourcePath,
+                SourcePath: canonicalSourcePath,
                 PhysicalFileId: physicalFileId,
                 SegmentId: segmentId,
                 IngestRunId: runId,
@@ -254,6 +313,23 @@ public sealed class IngestOrchestrator
         // Flush remaining
         if (batch.Count > 0)
             await writer.WriteAsync(batch.ToList(), ct);
+
+        var fileHash = await ComputeStreamHashAsync(stream, ct);
+
+        return new SegmentUpsertRow(
+            SegmentId: segmentId,
+            LogicalSourceId: logicalSourceId,
+            PhysicalFileId: physicalFileId,
+            MinTsUtc: minTs,
+            MaxTsUtc: maxTs,
+            RowCount: recordIndex,
+            LastIngestRunId: runId,
+            Active: true,
+            LastByteOffset: stream.Length,
+            SourcePath: canonicalSourcePath,
+            FileSizeBytes: stream.Length,
+            LastModifiedUtc: lastModifiedUtc,
+            FileHash: fileHash);
     }
 
     private static IRecordReader CreateReader(
@@ -273,6 +349,44 @@ public sealed class IngestOrchestrator
         string FileName,
         Func<MemoryStream> OpenStream,
         bool isZipEntry);
+
+    private static DateTimeOffset ResolveLastModifiedUtc(string sourcePath, bool isZipEntry)
+    {
+        if (!isZipEntry && File.Exists(sourcePath))
+            return new DateTimeOffset(File.GetLastWriteTimeUtc(sourcePath), TimeSpan.Zero);
+
+        var bangIndex = sourcePath.IndexOf('!');
+        if (bangIndex > 0)
+        {
+            var zipPath = sourcePath[..bangIndex];
+            if (File.Exists(zipPath))
+                return new DateTimeOffset(File.GetLastWriteTimeUtc(zipPath), TimeSpan.Zero);
+        }
+
+        return DateTimeOffset.UtcNow;
+    }
+
+    private static string CanonicalizeSourcePath(string sourcePath)
+    {
+        var bangIndex = sourcePath.IndexOf('!');
+        if (bangIndex > 0)
+        {
+            var archivePath = sourcePath[..bangIndex];
+            var entrySuffix = sourcePath[bangIndex..];
+            var fullArchivePath = Path.GetFullPath(archivePath);
+            return $"{fullArchivePath}{entrySuffix}";
+        }
+
+        return Path.GetFullPath(sourcePath);
+    }
+
+    private static async Task<string> ComputeStreamHashAsync(MemoryStream stream, CancellationToken ct)
+    {
+        stream.Position = 0;
+        var hashBytes = await System.Security.Cryptography.SHA256.HashDataAsync(stream, ct);
+        stream.Position = 0;
+        return Convert.ToHexStringLower(hashBytes);
+    }
 }
 
 public sealed record IngestResult(

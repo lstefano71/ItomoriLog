@@ -10,11 +10,12 @@ public class ExportDialogViewModel : ViewModelBase
     private bool _isOpen;
     private ExportFormat _selectedFormat = ExportFormat.Csv;
     private string _outputPath = "";
-    private bool _exportCurrentFilter = true;
+    private ExportScope _selectedScope = ExportScope.CurrentView;
     private bool _isExporting;
     private double _progressPercent;
     private string _progressText = "";
     private string _errorText = "";
+    private SessionShellViewModel? _boundSession;
 
     public ExportDialogViewModel()
     {
@@ -64,10 +65,22 @@ public class ExportDialogViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _outputPath, value);
     }
 
-    public bool ExportCurrentFilter
+    public ExportScope SelectedScope
     {
-        get => _exportCurrentFilter;
-        set => this.RaiseAndSetIfChanged(ref _exportCurrentFilter, value);
+        get => _selectedScope;
+        set => this.RaiseAndSetIfChanged(ref _selectedScope, value);
+    }
+
+    public bool IsCurrentViewScope
+    {
+        get => SelectedScope == ExportScope.CurrentView;
+        set { if (value) SelectedScope = ExportScope.CurrentView; }
+    }
+
+    public bool IsFullSessionScope
+    {
+        get => SelectedScope == ExportScope.FullSession;
+        set { if (value) SelectedScope = ExportScope.FullSession; }
     }
 
     public bool IsExporting
@@ -108,7 +121,41 @@ public class ExportDialogViewModel : ViewModelBase
         ErrorText = "";
         ProgressText = "";
         ProgressPercent = 0;
+        if (string.IsNullOrWhiteSpace(OutputPath))
+        {
+            var ext = SelectedFormat switch
+            {
+                ExportFormat.Csv => "csv",
+                ExportFormat.JsonLines => "jsonl",
+                ExportFormat.Parquet => "parquet",
+                _ => "csv"
+            };
+            var stem = SanitizeFileStem(_boundSession?.Title ?? "export");
+            OutputPath = Path.Combine(
+                _boundSession?.SessionFolder ?? Environment.CurrentDirectory,
+                "exports",
+                $"{stem}_{DateTime.UtcNow:yyyyMMdd_HHmmss}.{ext}");
+        }
         IsOpen = true;
+    }
+
+    public void BindSession(SessionShellViewModel session)
+    {
+        _boundSession = session;
+        ExportCallback = session.ExecuteExportAsync;
+
+        if (string.IsNullOrWhiteSpace(OutputPath))
+        {
+            var ext = SelectedFormat switch
+            {
+                ExportFormat.Csv => "csv",
+                ExportFormat.JsonLines => "jsonl",
+                ExportFormat.Parquet => "parquet",
+                _ => "csv"
+            };
+            var stem = SanitizeFileStem(session.Title);
+            OutputPath = Path.Combine(session.SessionFolder, "exports", $"{stem}_{DateTime.UtcNow:yyyyMMdd_HHmmss}.{ext}");
+        }
     }
 
     private async Task DoExportAsync()
@@ -120,7 +167,9 @@ public class ExportDialogViewModel : ViewModelBase
 
         try
         {
-            var options = new ExportOptions(SelectedFormat, OutputPath);
+            var options = _boundSession is not null
+                ? _boundSession.BuildExportOptions(SelectedScope, SelectedFormat, OutputPath)
+                : new ExportOptions(SelectedFormat, OutputPath, Scope: SelectedScope);
             var progress = new Progress<ExportProgress>(p =>
             {
                 ProgressText = p.Status;
@@ -140,5 +189,12 @@ public class ExportDialogViewModel : ViewModelBase
         {
             IsExporting = false;
         }
+    }
+
+    private static string SanitizeFileStem(string value)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var cleaned = new string(value.Select(c => invalid.Contains(c) ? '_' : c).ToArray());
+        return string.IsNullOrWhiteSpace(cleaned) ? "export" : cleaned;
     }
 }

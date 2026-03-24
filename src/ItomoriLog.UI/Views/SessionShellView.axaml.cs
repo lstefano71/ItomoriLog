@@ -14,7 +14,17 @@ public partial class SessionShellView : UserControl
         AddFilesButton.Click += OnAddFilesClick;
     }
 
+    public async void OpenFilePicker()
+    {
+        await PickAndIngestFilesAsync();
+    }
+
     private async void OnAddFilesClick(object? sender, RoutedEventArgs e)
+    {
+        await PickAndIngestFilesAsync();
+    }
+
+    private async Task PickAndIngestFilesAsync()
     {
         var topLevel = TopLevel.GetTopLevel(this);
         if (topLevel is null) return;
@@ -34,8 +44,6 @@ public partial class SessionShellView : UserControl
             .ToList();
 
         if (paths.Count > 0 && DataContext is SessionShellViewModel vm)
-        {
             vm.IngestFilesCommand.Execute(paths).Subscribe();
-        }
     }
 }

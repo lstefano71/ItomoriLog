@@ -51,7 +51,9 @@ public sealed class ReingestService
 
         // 4. Read all records
         fileStream.Position = 0;
-        var textReader = new StreamReader(fileStream);
+        var encoding = EncodingDetector.Detect(fileStream);
+        fileStream.Position = 0;
+        var textReader = new StreamReader(fileStream, encoding, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
         var skipSink = new ListSkipSink();
         var skipLogger = new SkipLogger(skipSink, segment.LogicalSourceId, segment.PhysicalFileId, segmentId);
         using var recordReader = CreateReader(detection.Boundary, textReader, skipLogger);
@@ -67,7 +69,7 @@ public sealed class ReingestService
         {
             ct.ThrowIfCancellationRequested();
 
-            if (!detection.Extractor.TryExtract(raw, out var timestamp))
+            if (!TimestampResolver.TryResolve(detection.Extractor, raw, defaultTimeBasis, out var resolvedTimestamp))
             {
                 var seg = skipLogger.BeginSkip(SkipReasonCode.TimeParse,
                     "Timestamp extraction failed", startLine: raw.LineNumber);
@@ -75,8 +77,8 @@ public sealed class ReingestService
                 continue;
             }
 
-            var utcTimestamp = TimezonePolicy.ApplyTimeBasis(timestamp, defaultTimeBasis);
-            var offsetMinutes = (int)timestamp.Offset.TotalMinutes;
+            var utcTimestamp = resolvedTimestamp.UtcTimestamp;
+            var offsetMinutes = resolvedTimestamp.EffectiveOffsetMinutes;
 
             string? level = null;
             string message = raw.FullText;
@@ -115,9 +117,9 @@ public sealed class ReingestService
 
             rows.Add(new LogRow(
                 TimestampUtc: utcTimestamp,
-                TimestampBasis: defaultTimeBasis.Basis,
+                TimestampBasis: resolvedTimestamp.Basis,
                 TimestampEffectiveOffsetMinutes: offsetMinutes,
-                TimestampOriginal: raw.FirstLine[..Math.Min(raw.FirstLine.Length, 50)],
+                TimestampOriginal: resolvedTimestamp.TimestampOriginal ?? raw.FirstLine[..Math.Min(raw.FirstLine.Length, 50)],
                 LogicalSourceId: segment.LogicalSourceId,
                 SourcePath: sourcePath,
                 PhysicalFileId: segment.PhysicalFileId,
@@ -140,9 +142,25 @@ public sealed class ReingestService
             var inserter = new LogBatchInserter(_connection);
             await inserter.InsertBatchAsync(rows, ct);
 
+            var skipInserter = new SkipBatchInserter(_connection);
+            await skipInserter.InsertBatchAsync(skipSink.GetSkips(), sessionId: null, ct);
+
             DateTimeOffset? minTs = rows.Count > 0 ? rows.Min(r => r.TimestampUtc) : null;
             DateTimeOffset? maxTs = rows.Count > 0 ? rows.Max(r => r.TimestampUtc) : null;
-            await UpdateSegmentAsync(segmentId, runId, rows.Count, minTs, maxTs, ct);
+            var fileInfo = new FileInfo(sourcePath);
+            var fileHash = await FileChangeDetector.ComputeFileHashAsync(sourcePath, ct);
+            await UpdateSegmentAsync(
+                segmentId,
+                runId,
+                rows.Count,
+                minTs,
+                maxTs,
+                sourcePath,
+                fileInfo.Length,
+                new DateTimeOffset(fileInfo.LastWriteTimeUtc, TimeSpan.Zero),
+                fileHash,
+                fileInfo.Length,
+                ct);
 
             await ExecuteAsync("COMMIT", ct);
             await tracker.CompleteRunAsync(runId, ct);
@@ -167,7 +185,8 @@ public sealed class ReingestService
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
             SELECT segment_id, logical_source_id, physical_file_id,
-                   min_ts_utc, max_ts_utc, row_count, last_ingest_run_id, active
+                   min_ts_utc, max_ts_utc, row_count, last_ingest_run_id, active,
+                   source_path, file_size_bytes, last_modified_utc, file_hash, last_byte_offset
             FROM segments WHERE segment_id = $1
             """;
         cmd.Parameters.Add(new DuckDBParameter { Value = segmentId });
@@ -183,11 +202,20 @@ public sealed class ReingestService
             MaxTsUtc: reader.IsDBNull(4) ? null : reader.GetDateTime(4),
             RowCount: reader.GetInt64(5),
             LastIngestRunId: reader.GetString(6),
-            Active: reader.GetBoolean(7));
+            Active: reader.GetBoolean(7),
+            SourcePath: reader.IsDBNull(8) ? null : reader.GetString(8),
+            FileSizeBytes: reader.IsDBNull(9) ? null : reader.GetInt64(9),
+            LastModifiedUtc: reader.IsDBNull(10) ? null : reader.GetDateTime(10),
+            FileHash: reader.IsDBNull(11) ? null : reader.GetString(11),
+            LastByteOffset: reader.IsDBNull(12) ? null : reader.GetInt64(12));
     }
 
     private async Task<string?> ResolveSourcePathAsync(string segmentId, CancellationToken ct)
     {
+        var segment = await LoadSegmentAsync(segmentId, ct);
+        if (segment?.SourcePath is not null)
+            return segment.SourcePath;
+
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = "SELECT source_path FROM logs WHERE segment_id = $1 LIMIT 1";
         cmd.Parameters.Add(new DuckDBParameter { Value = segmentId });
@@ -214,6 +242,11 @@ public sealed class ReingestService
     private async Task UpdateSegmentAsync(
         string segmentId, string runId, long rowCount,
         DateTimeOffset? minTs, DateTimeOffset? maxTs,
+        string sourcePath,
+        long fileSizeBytes,
+        DateTimeOffset lastModifiedUtc,
+        string fileHash,
+        long lastByteOffset,
         CancellationToken ct)
     {
         using var cmd = _connection.CreateCommand();
@@ -222,13 +255,23 @@ public sealed class ReingestService
                 row_count = $1,
                 min_ts_utc = $2,
                 max_ts_utc = $3,
-                last_ingest_run_id = $4
-            WHERE segment_id = $5
+                last_ingest_run_id = $4,
+                source_path = $5,
+                file_size_bytes = $6,
+                last_modified_utc = $7,
+                file_hash = $8,
+                last_byte_offset = $9
+            WHERE segment_id = $10
             """;
         cmd.Parameters.Add(new DuckDBParameter { Value = rowCount });
         cmd.Parameters.Add(new DuckDBParameter { Value = minTs.HasValue ? (object)minTs.Value.UtcDateTime : DBNull.Value });
         cmd.Parameters.Add(new DuckDBParameter { Value = maxTs.HasValue ? (object)maxTs.Value.UtcDateTime : DBNull.Value });
         cmd.Parameters.Add(new DuckDBParameter { Value = runId });
+        cmd.Parameters.Add(new DuckDBParameter { Value = sourcePath });
+        cmd.Parameters.Add(new DuckDBParameter { Value = fileSizeBytes });
+        cmd.Parameters.Add(new DuckDBParameter { Value = lastModifiedUtc.UtcDateTime });
+        cmd.Parameters.Add(new DuckDBParameter { Value = fileHash });
+        cmd.Parameters.Add(new DuckDBParameter { Value = lastByteOffset });
         cmd.Parameters.Add(new DuckDBParameter { Value = segmentId });
         await cmd.ExecuteNonQueryAsync(ct);
     }

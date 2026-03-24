@@ -74,7 +74,7 @@ public class DetectionWizardViewModel : ViewModelBase
         IsLoadingPreview = true;
         try
         {
-            var lines = PreviewProvider(candidate);
+            var lines = candidate.PreviewLines ?? PreviewProvider(candidate);
             PreviewText = lines.Count > 0
                 ? string.Join(Environment.NewLine, lines)
                 : "(no records parsed)";
@@ -98,7 +98,9 @@ public class DetectionWizardViewModel : ViewModelBase
 public sealed record DetectionCandidate(
     string FormatName,
     double Confidence,
-    DetectionResult Detection)
+    DetectionResult Detection,
+    string SourcePath,
+    IReadOnlyList<string>? PreviewLines = null)
 {
     public string ConfidenceDisplay => $"{Confidence:P0}";
 }

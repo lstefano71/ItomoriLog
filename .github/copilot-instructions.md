@@ -1,22 +1,12 @@
 # ItomoriLog — Copilot Instructions
 
-> **Status:** Pre-implementation. The repo currently contains design documents only. The code described below is the target implementation.
-
 ## Project Overview
 
 ItomoriLog is a cross-platform desktop log ingestion and browsing app — fast, local-first, built on **.NET 10 / C# 14**, **Avalonia** (AOT-compatible), and **DuckDB + DuckLake** storage (ACID, Parquet-backed).
 
-## Target Assembly Structure
+## IMPORTANT
+if the code changes, the documentation must be updated to reflect the changes. If we want to keep the history, then we should update the documentation in such a way that an agent can look at it and understand what the state is now and, if interested, look at the history to understand how it got there. But if there are important changes (like paragraph 6.3 in the design decisions) that are not reflected in the main documentation or can be missed, then the documentation should still be organised in a way that makes paragraph 6.3 visible at first glance and not only on explicit request by the user.)
 
-```
-ItomoriLog.App        // Avalonia shell, startup, Brand constants
-ItomoriLog.UI         // Views, ViewModels, controls
-ItomoriLog.Ingest     // Detectors, record readers, timestamp extractors
-ItomoriLog.DuckLake   // DuckDB/DuckLake integration, session store
-ItomoriLog.Query      // Query planner, keyset pagination, TICK DSL rewriter
-ItomoriLog.Model      // Shared records and contracts
-ItomoriLog.Tests      // Unit, property, and integration tests
-```
 
 ## Architecture
 
@@ -67,17 +57,6 @@ The query box supports `timestamp IN 'TICK'` expressions modeled after QuestDB:
 The `TickCompiler` class in `ItomoriLog.Query` parses TICK → AST → merged UTC `[start,end)` intervals (DST-aware via `TimeZoneInfo` or NodaTime). Emission: ≤64 intervals → OR-chain; >64 → temp table `_q_intervals(start_ts,end_ts)` + `EXISTS`.
 
 ## Key Conventions
-
-### Interfaces and sealed records
-Core ingest contracts use interfaces + sealed records, not abstract classes:
-```csharp
-public interface IFormatDetector { DetectionResult Probe(Stream sample, string sourceName); }
-public sealed record DetectionResult(double Confidence, RecordBoundarySpec Boundary, ITimestampExtractor Extractor, string? Notes = null);
-public interface ITimestampExtractor { bool TryExtract(RawRecord raw, out DateTimeOffset ts); }
-```
-
-### Timezone policy
-Bare timestamps (no offset) default to **Local** and are converted to UTC at ingest time. Always store `timestamp_basis` (`Local|Utc|FixedOffset|Zone`), `timestamp_effective_offset_minutes`, and optionally `timestamp_original`.
 
 ### Skip reason codes
 `DecodeError`, `CsvColumnMismatch`, `JsonMalformed`, `RegexDrift`, `Oversize`, `TimeParse`, `ZipEntryCorrupt`, `UserSkip`, `NestedArchive`, `NotRecognized`, `Abandoned`, `IOError`

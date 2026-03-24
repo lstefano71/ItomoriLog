@@ -8,4 +8,9 @@ public sealed record SegmentRow(
     DateTimeOffset? MaxTsUtc,
     long RowCount,
     string LastIngestRunId,
-    bool Active);
+    bool Active,
+    string? SourcePath,
+    long? FileSizeBytes,
+    DateTimeOffset? LastModifiedUtc,
+    string? FileHash,
+    long? LastByteOffset);

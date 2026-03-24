@@ -71,9 +71,10 @@ public class FacetPanelViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> RefreshCommand { get; }
 
     /// <summary>
-    /// Raised when facet selections change (levels, sources).
+    /// Raised when facet selections change:
+    /// (includedLevels, excludedLevels, includedSources, excludedSources).
     /// </summary>
-    public event Action<IReadOnlyList<string>, IReadOnlyList<string>>? SelectionChanged;
+    public event Action<IReadOnlyList<string>, IReadOnlyList<string>, IReadOnlyList<string>, IReadOnlyList<string>>? SelectionChanged;
 
     // --- Methods ---
 
@@ -138,8 +139,8 @@ public class FacetPanelViewModel : ViewModelBase
             ct.ThrowIfCancellationRequested();
 
             // Merge with existing selection states
-            LevelFacets = MergeWithExisting(levelItems, LevelFacets);
-            SourceFacets = MergeWithExisting(sourceItems, SourceFacets);
+            LevelFacets = MergeWithExisting(levelItems, LevelFacets, OnLevelFacetStateChanged);
+            SourceFacets = MergeWithExisting(sourceItems, SourceFacets, OnSourceFacetStateChanged);
         }
         catch (OperationCanceledException) { }
         finally
@@ -170,9 +171,19 @@ public class FacetPanelViewModel : ViewModelBase
     public IReadOnlyList<string> GetSelectedLevels() => GetIncludedValues(LevelFacets);
 
     /// <summary>
+    /// Get the currently selected (Exclude) levels.
+    /// </summary>
+    public IReadOnlyList<string> GetExcludedLevels() => GetExcludedValues(LevelFacets);
+
+    /// <summary>
     /// Get the currently selected (Include) sources.
     /// </summary>
     public IReadOnlyList<string> GetSelectedSources() => GetIncludedValues(SourceFacets);
+
+    /// <summary>
+    /// Get the currently selected (Exclude) sources.
+    /// </summary>
+    public IReadOnlyList<string> GetExcludedSources() => GetExcludedValues(SourceFacets);
 
     /// <summary>
     /// Notify listeners that selection has changed.
@@ -180,7 +191,25 @@ public class FacetPanelViewModel : ViewModelBase
     public void NotifySelectionChanged()
     {
         InvalidateCache();
-        SelectionChanged?.Invoke(GetSelectedLevels(), GetSelectedSources());
+        SelectionChanged?.Invoke(
+            GetSelectedLevels(),
+            GetExcludedLevels(),
+            GetSelectedSources(),
+            GetExcludedSources());
+    }
+
+    private void OnLevelFacetStateChanged(FacetItemViewModel changed)
+    {
+        NormalizeFacetStates(LevelFacets, changed);
+        NotifySelectionChanged();
+        RefreshDebounced();
+    }
+
+    private void OnSourceFacetStateChanged(FacetItemViewModel changed)
+    {
+        NormalizeFacetStates(SourceFacets, changed);
+        NotifySelectionChanged();
+        RefreshDebounced();
     }
 
     private static List<string> GetIncludedValues(ObservableCollection<FacetItemViewModel> facets)
@@ -191,9 +220,18 @@ public class FacetPanelViewModel : ViewModelBase
             .ToList();
     }
 
-    private static ObservableCollection<FacetItemViewModel> MergeWithExisting(
+    private static List<string> GetExcludedValues(ObservableCollection<FacetItemViewModel> facets)
+    {
+        return facets
+            .Where(f => f.State == FacetSelectionState.Exclude)
+            .Select(f => f.Value)
+            .ToList();
+    }
+
+    private ObservableCollection<FacetItemViewModel> MergeWithExisting(
         FacetItem[] newItems,
-        ObservableCollection<FacetItemViewModel> existing)
+        ObservableCollection<FacetItemViewModel> existing,
+        Action<FacetItemViewModel> onStateChanged)
     {
         var existingStates = existing.ToDictionary(f => f.Value, f => f.State);
         var result = new ObservableCollection<FacetItemViewModel>();
@@ -201,10 +239,31 @@ public class FacetPanelViewModel : ViewModelBase
         foreach (var item in newItems)
         {
             var state = existingStates.GetValueOrDefault(item.Value, FacetSelectionState.Ignore);
-            result.Add(new FacetItemViewModel(item.Value, item.Count) { State = state });
+            result.Add(new FacetItemViewModel(item.Value, item.Count, onStateChanged)
+            {
+                State = state
+            });
         }
 
         return result;
+    }
+
+    private static void NormalizeFacetStates(
+        ObservableCollection<FacetItemViewModel> facets,
+        FacetItemViewModel changed)
+    {
+        if (changed.State == FacetSelectionState.Ignore)
+            return;
+
+        var conflictingState = changed.State == FacetSelectionState.Include
+            ? FacetSelectionState.Exclude
+            : FacetSelectionState.Include;
+
+        foreach (var facet in facets)
+        {
+            if (!ReferenceEquals(facet, changed) && facet.State == conflictingState)
+                facet.State = FacetSelectionState.Ignore;
+        }
     }
 
     private static string BuildCacheKey(

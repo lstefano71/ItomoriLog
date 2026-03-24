@@ -61,6 +61,7 @@
                         HorizontalContentAlignment="Stretch"
                         HorizontalAlignment="Stretch"
                         Padding="4,3" Cursor="Hand"
+                        Command="{Binding CycleStateCommand, FallbackValue={x:Null}}"
                         Name="SourceFacetButton">
                   <Grid ColumnDefinitions="20,*,Auto">
                     <TextBlock Grid.Column="0" FontSize="12" VerticalAlignment="Center">

@@ -6,6 +6,10 @@
              x:DataType="vm:SessionShellViewModel">
 
   <DockPanel>
+    <views:CrashRecoveryBannerView DockPanel.Dock="Top"
+                                   DataContext="{Binding CrashRecovery}"
+                                   IsVisible="{Binding CrashRecovery.IsVisible}" />
+
     <!-- Session Header -->
     <Border DockPanel.Dock="Top" Background="{StaticResource Itomori.Panel}" Padding="16,10">
       <Grid ColumnDefinitions="*,Auto">

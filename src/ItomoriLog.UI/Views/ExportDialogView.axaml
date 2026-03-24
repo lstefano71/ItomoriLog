@@ -41,19 +41,27 @@
         <StackPanel Spacing="4">
           <TextBlock Text="Output file" FontSize="13" Foreground="#9CA3AF" />
           <Grid ColumnDefinitions="*,Auto">
-            <TextBox Text="{Binding OutputPath}"
-                     Watermark="Select output file..."
-                     FontSize="13" />
-            <Button Grid.Column="1" Content="Browse..."
-                    Command="{Binding BrowseCommand}"
-                    Margin="8,0,0,0" />
-          </Grid>
-        </StackPanel>
+             <TextBox Text="{Binding OutputPath}"
+                      Watermark="Select output file..."
+                      FontSize="13" />
+             <Button Grid.Column="1" Content="Browse..."
+                     Click="OnBrowseClick"
+                     Margin="8,0,0,0" />
+           </Grid>
+         </StackPanel>
 
-        <!-- Export current filter -->
-        <CheckBox Content="Export current filter only"
-                  IsChecked="{Binding ExportCurrentFilter}"
-                  Foreground="#D6E2F0" />
+        <!-- Scope selector -->
+        <StackPanel Spacing="4">
+          <TextBlock Text="Scope" FontSize="13" Foreground="#9CA3AF" />
+          <StackPanel Orientation="Horizontal" Spacing="16">
+            <RadioButton Content="Current view (filtered)"
+                         IsChecked="{Binding IsCurrentViewScope}"
+                         Foreground="#D6E2F0" GroupName="Scope" />
+            <RadioButton Content="Full session"
+                         IsChecked="{Binding IsFullSessionScope}"
+                         Foreground="#D6E2F0" GroupName="Scope" />
+          </StackPanel>
+        </StackPanel>
 
         <!-- Progress -->
         <StackPanel Spacing="4" IsVisible="{Binding IsExporting}">

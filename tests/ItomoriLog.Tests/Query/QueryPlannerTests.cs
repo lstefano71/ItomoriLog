@@ -94,6 +94,26 @@ public class QueryPlannerTests
         result.Parameters[0].Should().Be("%timeout%");
     }
 
+    [Fact]
+    public void Plan_TextSearchQuery_ProducesBooleanExpression()
+    {
+        var filter = new FilterState
+        {
+            TextSearchQuery = new MessageAndNode(
+                new MessageTermNode("error"),
+                new MessageOrNode(new MessageTermNode("timeout"), new MessageTermNode("retry")))
+        };
+
+        var result = _planner.Plan(filter);
+
+        result.Sql.Should().Contain("(message ILIKE $1 ESCAPE '\\'");
+        result.Sql.Should().Contain("AND");
+        result.Sql.Should().Contain("OR");
+        result.Parameters.Should().Contain("%error%");
+        result.Parameters.Should().Contain("%timeout%");
+        result.Parameters.Should().Contain("%retry%");
+    }
+
     // -----------------------------------------------------------------------
     // Combined filters
     // -----------------------------------------------------------------------
@@ -241,6 +261,21 @@ public class QueryPlannerTests
         result.Sql.Should().Contain("level IN ($1)");
         result.Sql.Should().Contain("(timestamp_utc, segment_id, record_index) > ($2, $3, $4)");
         result.Sql.Should().Contain("LIMIT $5");
+    }
+
+    [Fact]
+    public void Plan_ExcludeFilters_ProduceNotInClauses()
+    {
+        var filter = new FilterState
+        {
+            ExcludedLevels = ["DEBUG"],
+            ExcludedSourceIds = ["src-a"]
+        };
+
+        var result = _planner.Plan(filter);
+
+        result.Sql.Should().Contain("logical_source_id NOT IN ($1)");
+        result.Sql.Should().Contain("level IS NULL OR level NOT IN ($2)");
     }
 
     // -----------------------------------------------------------------------

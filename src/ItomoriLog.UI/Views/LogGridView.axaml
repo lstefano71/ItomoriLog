@@ -11,13 +11,19 @@
         <TextBox Watermark="Text search..."
                  Text="{Binding TextSearch}"
                  Width="200" />
-        <TextBox Watermark="TICK expression (e.g. $now-1h..$now)"
+        <TextBox Watermark="Query (AND/OR/() + timestamp IN 'TICK')"
+                 Name="QueryTextBox"
                  Text="{Binding QueryText}"
-                 Width="300" />
+                 Width="420" />
         <Button Content="↻ Refresh" Command="{Binding RefreshCommand}" />
         <TextBlock Text="{Binding StatusText}"
-                   Foreground="{StaticResource Itomori.SubtleForeground}"
-                   VerticalAlignment="Center" Margin="12,0,0,0" />
+                    Foreground="{StaticResource Itomori.SubtleForeground}"
+                    VerticalAlignment="Center" Margin="12,0,0,0" />
+        <TextBlock Text="{Binding QueryParseError}"
+                   Foreground="{StaticResource Brush.Error}"
+                   VerticalAlignment="Center"
+                   Margin="8,0,0,0"
+                   IsVisible="{Binding QueryParseError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
       </StackPanel>
     </Border>
 

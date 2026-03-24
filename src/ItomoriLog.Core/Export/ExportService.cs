@@ -16,10 +16,20 @@ public enum ExportFormat
 
 public sealed record ExportProgress(long RowsWritten, long TotalEstimate, string Status);
 
+public enum ExportScope
+{
+    CurrentView,
+    FullSession
+}
+
 public sealed record ExportOptions(
     ExportFormat Format,
     string OutputPath,
-    FilterState? Filter = null);
+    FilterState? Filter = null,
+    ExportScope Scope = ExportScope.CurrentView,
+    string? SessionTitle = null,
+    string? SessionDescription = null,
+    string? SessionFolder = null);
 
 public sealed class ExportService
 {
@@ -49,10 +59,11 @@ public sealed class ExportService
     private async Task<long> ExportCsvAsync(
         ExportOptions options, IProgress<ExportProgress>? progress, CancellationToken ct)
     {
-        var totalEstimate = await EstimateCountAsync(options.Filter, ct);
+        var effectiveFilter = ResolveExportFilter(options);
+        var totalEstimate = await EstimateCountAsync(effectiveFilter, ct);
         progress?.Report(new ExportProgress(0, totalEstimate, "Starting CSV export..."));
 
-        var (whereSql, parameters) = BuildWhereClause(options.Filter);
+        var (whereSql, parameters) = BuildWhereClause(effectiveFilter);
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = $"""
             SELECT timestamp_utc, timestamp_basis, timestamp_effective_offset_minutes,
@@ -99,6 +110,7 @@ public sealed class ExportService
                 progress?.Report(new ExportProgress(rowsWritten, totalEstimate, $"Exported {rowsWritten:N0} rows..."));
         }
 
+        await WriteCsvMetadataAsync(options, rowsWritten, ct);
         progress?.Report(new ExportProgress(rowsWritten, rowsWritten, "CSV export complete"));
         return rowsWritten;
     }
@@ -106,10 +118,11 @@ public sealed class ExportService
     private async Task<long> ExportJsonLinesAsync(
         ExportOptions options, IProgress<ExportProgress>? progress, CancellationToken ct)
     {
-        var totalEstimate = await EstimateCountAsync(options.Filter, ct);
+        var effectiveFilter = ResolveExportFilter(options);
+        var totalEstimate = await EstimateCountAsync(effectiveFilter, ct);
         progress?.Report(new ExportProgress(0, totalEstimate, "Starting JSON Lines export..."));
 
-        var (whereSql, parameters) = BuildWhereClause(options.Filter);
+        var (whereSql, parameters) = BuildWhereClause(effectiveFilter);
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = $"""
             SELECT timestamp_utc, timestamp_basis, timestamp_effective_offset_minutes,
@@ -165,15 +178,17 @@ public sealed class ExportService
     private async Task<long> ExportParquetAsync(
         ExportOptions options, IProgress<ExportProgress>? progress, CancellationToken ct)
     {
-        var totalEstimate = await EstimateCountAsync(options.Filter, ct);
+        var effectiveFilter = ResolveExportFilter(options);
+        var totalEstimate = await EstimateCountAsync(effectiveFilter, ct);
         progress?.Report(new ExportProgress(0, totalEstimate, "Starting Parquet export..."));
 
-        var (whereSql, parameters) = BuildWhereClause(options.Filter);
+        var (whereSql, parameters) = BuildWhereClause(effectiveFilter);
 
         // Escape single quotes in path for SQL
         var escapedPath = options.OutputPath.Replace("'", "''").Replace("\\", "/");
 
         using var cmd = _connection.CreateCommand();
+        var metadataSql = BuildParquetMetadataSql(options);
         cmd.CommandText = $"""
             COPY (
                 SELECT timestamp_utc, timestamp_basis, timestamp_effective_offset_minutes,
@@ -182,7 +197,7 @@ public sealed class ExportService
                        record_index, level, message, fields
                 FROM logs{whereSql}
                 ORDER BY timestamp_utc ASC, segment_id ASC, record_index ASC
-            ) TO '{escapedPath}' (FORMAT PARQUET)
+            ) TO '{escapedPath}' ({metadataSql})
             """;
         foreach (var p in parameters)
             cmd.Parameters.Add(p);
@@ -199,6 +214,11 @@ public sealed class ExportService
         progress?.Report(new ExportProgress(count, count, "Parquet export complete"));
         return count;
     }
+
+    private static FilterState? ResolveExportFilter(ExportOptions options) =>
+        options.Scope == ExportScope.FullSession ? null : options.Filter;
+
+    internal static string BuildCsvMetadataPath(string outputPath) => GetCsvMetadataPath(outputPath);
 
     private async Task<long> EstimateCountAsync(FilterState? filter, CancellationToken ct)
     {
@@ -242,6 +262,16 @@ public sealed class ExportService
             }
             clauses.Add($"logical_source_id IN ({string.Join(", ", placeholders)})");
         }
+        if (filter.ExcludedSourceIds is { Count: > 0 })
+        {
+            var placeholders = new List<string>();
+            foreach (var sourceId in filter.ExcludedSourceIds)
+            {
+                parameters.Add(new DuckDBParameter { Value = sourceId });
+                placeholders.Add($"${parameters.Count}");
+            }
+            clauses.Add($"logical_source_id NOT IN ({string.Join(", ", placeholders)})");
+        }
 
         if (filter.Levels is { Count: > 0 })
         {
@@ -252,6 +282,16 @@ public sealed class ExportService
                 placeholders.Add($"${parameters.Count}");
             }
             clauses.Add($"level IN ({string.Join(", ", placeholders)})");
+        }
+        if (filter.ExcludedLevels is { Count: > 0 })
+        {
+            var placeholders = new List<string>();
+            foreach (var level in filter.ExcludedLevels)
+            {
+                parameters.Add(new DuckDBParameter { Value = level });
+                placeholders.Add($"${parameters.Count}");
+            }
+            clauses.Add($"(level IS NULL OR level NOT IN ({string.Join(", ", placeholders)}))");
         }
 
         if (!string.IsNullOrWhiteSpace(filter.TextSearch))
@@ -314,4 +354,53 @@ public sealed class ExportService
                 break;
         }
     }
+
+    private static string BuildParquetMetadataSql(ExportOptions options)
+    {
+        var parts = new List<string> { "FORMAT PARQUET" };
+        var metadataEntries = new List<string>
+        {
+            $"export_scope: '{EscapeSqlString(options.Scope.ToString())}'",
+            $"export_format: '{EscapeSqlString(options.Format.ToString())}'"
+        };
+
+        if (!string.IsNullOrWhiteSpace(options.SessionTitle))
+            metadataEntries.Add($"session_title: '{EscapeSqlString(options.SessionTitle)}'");
+        if (!string.IsNullOrWhiteSpace(options.SessionDescription))
+            metadataEntries.Add($"session_description: '{EscapeSqlString(options.SessionDescription)}'");
+        if (!string.IsNullOrWhiteSpace(options.SessionFolder))
+            metadataEntries.Add($"session_folder: '{EscapeSqlString(options.SessionFolder)}'");
+
+        metadataEntries.Add($"exported_utc: '{EscapeSqlString(DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture))}'");
+
+        parts.Add($"KV_METADATA {{ {string.Join(", ", metadataEntries)} }}");
+        return string.Join(", ", parts);
+    }
+
+    private static async Task WriteCsvMetadataAsync(ExportOptions options, long rowsWritten, CancellationToken ct)
+    {
+        var metadataPath = GetCsvMetadataPath(options.OutputPath);
+        var metadata = new
+        {
+            format = options.Format.ToString(),
+            scope = options.Scope.ToString(),
+            exported_utc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+            rows_written = rowsWritten,
+            session_title = options.SessionTitle,
+            session_description = options.SessionDescription,
+            session_folder = options.SessionFolder
+        };
+
+        await using var fs = File.Create(metadataPath);
+        await JsonSerializer.SerializeAsync(fs, metadata, cancellationToken: ct);
+    }
+
+    private static string GetCsvMetadataPath(string outputPath)
+    {
+        var dir = Path.GetDirectoryName(outputPath);
+        var stem = Path.GetFileNameWithoutExtension(outputPath);
+        return Path.Combine(dir ?? "", $"{stem}_metadata.json");
+    }
+
+    private static string EscapeSqlString(string value) => value.Replace("'", "''");
 }

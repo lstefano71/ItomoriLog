@@ -228,6 +228,48 @@ public class QueryIntegrationTests : IDisposable
         });
     }
 
+    [Fact]
+    public async Task EndToEnd_MessageQueryNode_RespectsBooleanSemantics()
+    {
+        var baseTs = new DateTimeOffset(2025, 6, 15, 12, 0, 0, TimeSpan.Zero);
+        await SeedRowsAsync(30, baseTs);
+
+        var planner = new QueryPlanner();
+        var pager = new RowPager(_factory, planner, pageSize: 200);
+        var filter = new FilterState
+        {
+            TextSearchQuery = new MessageAndNode(
+                new MessageTermNode("Event"),
+                new MessageOrNode(new MessageTermNode("#1"), new MessageTermNode("#2")))
+        };
+
+        var result = await pager.FetchPageAsync(filter);
+
+        result.Rows.Should().NotBeEmpty();
+        result.Rows.Should().AllSatisfy(r =>
+        {
+            r.Message.Should().Contain("Event");
+            (r.Message.Contains("#1", StringComparison.OrdinalIgnoreCase)
+                || r.Message.Contains("#2", StringComparison.OrdinalIgnoreCase)).Should().BeTrue();
+        });
+    }
+
+    [Fact]
+    public async Task EndToEnd_ExcludedLevel_FilterRemovesRows()
+    {
+        var baseTs = new DateTimeOffset(2025, 6, 15, 12, 0, 0, TimeSpan.Zero);
+        await SeedRowsAsync(40, baseTs);
+
+        var planner = new QueryPlanner();
+        var pager = new RowPager(_factory, planner, pageSize: 200);
+        var filter = new FilterState { ExcludedLevels = ["DEBUG"] };
+
+        var result = await pager.FetchPageAsync(filter);
+
+        result.Rows.Should().NotBeEmpty();
+        result.Rows.Should().OnlyContain(r => r.Level != "DEBUG");
+    }
+
     public void Dispose()
     {
         _factory.Dispose();

@@ -41,7 +41,7 @@
                  Background="Transparent" BorderThickness="0">
           <ListBox.ItemTemplate>
             <DataTemplate x:DataType="core:RecentSessionEntry">
-              <Button Command="{Binding $parent[ListBox].((vm:WelcomeViewModel)DataContext).OpenSessionCommand}"
+              <Button Command="{ReflectionBinding $parent[ListBox].DataContext.OpenSessionCommand}"
                       CommandParameter="{Binding}"
                       Background="Transparent" BorderThickness="0" Padding="8"
                       HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">

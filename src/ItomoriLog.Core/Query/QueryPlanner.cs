@@ -10,14 +10,16 @@ public sealed class QueryPlanner
 {
     private readonly ITickCompiler _tickCompiler;
     private readonly TickSqlEmitter _tickEmitter;
+    private readonly SearchQuerySqlEmitter _searchEmitter;
 
-    public QueryPlanner(ITickCompiler tickCompiler, TickSqlEmitter tickEmitter)
+    public QueryPlanner(ITickCompiler tickCompiler, TickSqlEmitter tickEmitter, SearchQuerySqlEmitter? searchEmitter = null)
     {
         _tickCompiler = tickCompiler;
         _tickEmitter = tickEmitter;
+        _searchEmitter = searchEmitter ?? new SearchQuerySqlEmitter();
     }
 
-    public QueryPlanner() : this(new TickCompiler(), new TickSqlEmitter()) { }
+    public QueryPlanner() : this(new TickCompiler(), new TickSqlEmitter(), new SearchQuerySqlEmitter()) { }
 
     private const string SelectColumns = """
         timestamp_utc, timestamp_basis, timestamp_effective_offset_minutes,
@@ -60,6 +62,16 @@ public sealed class QueryPlanner
             }
             whereClauses.Add($"logical_source_id IN ({string.Join(", ", placeholders)})");
         }
+        if (filter.ExcludedSourceIds is { Count: > 0 })
+        {
+            var placeholders = new List<string>();
+            foreach (var sourceId in filter.ExcludedSourceIds)
+            {
+                parameters.Add(sourceId);
+                placeholders.Add($"${parameters.Count}");
+            }
+            whereClauses.Add($"logical_source_id NOT IN ({string.Join(", ", placeholders)})");
+        }
 
         // Level filter
         if (filter.Levels is { Count: > 0 })
@@ -72,9 +84,27 @@ public sealed class QueryPlanner
             }
             whereClauses.Add($"level IN ({string.Join(", ", placeholders)})");
         }
+        if (filter.ExcludedLevels is { Count: > 0 })
+        {
+            var placeholders = new List<string>();
+            foreach (var level in filter.ExcludedLevels)
+            {
+                parameters.Add(level);
+                placeholders.Add($"${parameters.Count}");
+            }
+            whereClauses.Add($"(level IS NULL OR level NOT IN ({string.Join(", ", placeholders)}))");
+        }
 
-        // Text search (ILIKE)
-        if (!string.IsNullOrWhiteSpace(filter.TextSearch))
+        // Text search (structured expression or simple ILIKE)
+        if (filter.TextSearchQuery is not null)
+        {
+            var emission = _searchEmitter.Emit(filter.TextSearchQuery, "message");
+            var rebasedWhere = RebaseParameterIndices(emission.WhereSql, parameters.Count);
+            foreach (var p in emission.Parameters)
+                parameters.Add(p);
+            whereClauses.Add(rebasedWhere);
+        }
+        else if (!string.IsNullOrWhiteSpace(filter.TextSearch))
         {
             parameters.Add($"%{filter.TextSearch}%");
             whereClauses.Add($"message ILIKE ${parameters.Count}");
