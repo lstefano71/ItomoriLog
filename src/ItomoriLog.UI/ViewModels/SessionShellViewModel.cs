@@ -18,6 +18,14 @@ public class SessionShellViewModel : ViewModelBase
     private long _recordCount;
     private bool _isIngesting;
     private LogsPageViewModel? _logsPage;
+    private TimelineViewModel? _timeline;
+    private FacetPanelViewModel? _facetPanel;
+
+    /// <summary>
+    /// When detection confidence is at or above this threshold, auto-ingest proceeds
+    /// without showing the DetectionWizard. Default: 0.95.
+    /// </summary>
+    public double AutoIngestConfidenceThreshold { get; set; } = 0.95;
 
     public SessionShellViewModel(MainWindowViewModel main, string sessionFolder)
     {
@@ -75,8 +83,31 @@ public class SessionShellViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _logsPage, value);
     }
 
+    public TimelineViewModel? Timeline
+    {
+        get => _timeline;
+        set => this.RaiseAndSetIfChanged(ref _timeline, value);
+    }
+
+    public FacetPanelViewModel? FacetPanel
+    {
+        get => _facetPanel;
+        set => this.RaiseAndSetIfChanged(ref _facetPanel, value);
+    }
+
     public ReactiveCommand<Unit, Unit> CloseSessionCommand { get; }
     public ReactiveCommand<IReadOnlyList<string>, Unit> IngestFilesCommand { get; }
+
+    /// <summary>
+    /// Checks if file detection confidence warrants auto-ingest (≥ threshold)
+    /// or if the wizard should be shown.
+    /// </summary>
+    public bool ShouldAutoIngest(EngineResult engineResult)
+    {
+        if (engineResult.Detection is null) return false;
+        if (engineResult.NeedsDisambiguation) return false;
+        return engineResult.Detection.Confidence >= AutoIngestConfidenceThreshold;
+    }
 
     private async Task LoadHeaderAsync()
     {
@@ -104,11 +135,40 @@ public class SessionShellViewModel : ViewModelBase
 
         StatusText = $"{RecordCount:N0} records | {_sessionFolder}";
 
-        // Initialize logs page VM with a persistent connection factory
+        // Initialize child VMs with a persistent connection factory
         var logsFactory = new DuckLakeConnectionFactory(dbPath);
         var logsConn = await logsFactory.GetConnectionAsync();
         await SchemaInitializer.EnsureSchemaAsync(logsConn);
+
         LogsPage = new LogsPageViewModel(logsFactory, DefaultTimezone);
+        Timeline = new TimelineViewModel(logsFactory);
+        FacetPanel = new FacetPanelViewModel(logsFactory);
+
+        WireChildViewModels();
+
+        // Load initial timeline and facets
+        await Timeline.LoadCoarseBinsAsync();
+        await FacetPanel.RefreshAsync();
+    }
+
+    private void WireChildViewModels()
+    {
+        if (Timeline is null || FacetPanel is null || LogsPage is null) return;
+
+        // Timeline selection → FilterState time window on LogsPage
+        Timeline.TimeRangeSelected += (start, end) =>
+        {
+            LogsPage.StartUtc = start;
+            LogsPage.EndUtc = end;
+            FacetPanel.UpdateTimeWindow(start, end);
+        };
+
+        // Facet selection changes → FilterState levels/sources on LogsPage
+        FacetPanel.SelectionChanged += (levels, sources) =>
+        {
+            LogsPage.SelectedLevels = new System.Collections.ObjectModel.ObservableCollection<string>(levels);
+            LogsPage.SelectedSources = new System.Collections.ObjectModel.ObservableCollection<string>(sources);
+        };
     }
 
     private async Task IngestFilesAsync(IReadOnlyList<string> filePaths)
@@ -126,6 +186,39 @@ public class SessionShellViewModel : ViewModelBase
             await SchemaInitializer.EnsureSchemaAsync(conn);
 
             var defaultTz = new TimeBasisConfig(TimeBasis.Local);
+            var detectionEngine = new DetectionEngine();
+
+            // Pre-detect to check confidence for auto-ingest
+            var allHighConfidence = true;
+            foreach (var path in filePaths)
+            {
+                if (path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                    continue; // ZIP files always auto-processed
+
+                using var sniffStream = new MemoryStream();
+                using (var fs = File.OpenRead(path))
+                {
+                    var buffer = new byte[Math.Min(fs.Length, 256 * 1024)];
+                    var bytesRead = await fs.ReadAsync(buffer);
+                    sniffStream.Write(buffer, 0, bytesRead);
+                }
+                sniffStream.Position = 0;
+
+                var engineResult = detectionEngine.Detect(sniffStream, Path.GetFileName(path));
+                if (!ShouldAutoIngest(engineResult))
+                {
+                    allHighConfidence = false;
+                    break;
+                }
+            }
+
+            if (!allHighConfidence)
+            {
+                StatusText = "Detection confidence below threshold — wizard recommended";
+                // In a full implementation, this would navigate to DetectionWizardView.
+                // Proceed with standard ingest as graceful degradation.
+            }
+
             var orchestrator = new IngestOrchestrator(conn);
             var result = await orchestrator.IngestFilesAsync(filePaths, defaultTz);
 
@@ -135,6 +228,10 @@ public class SessionShellViewModel : ViewModelBase
             // Update global store
             using var globalStore = new GlobalStore();
             await globalStore.AddRecentSessionAsync(_sessionFolder, Title, Description);
+
+            // Refresh timeline and facets after ingest
+            if (Timeline is not null) await Timeline.LoadCoarseBinsAsync();
+            if (FacetPanel is not null) { FacetPanel.InvalidateCache(); await FacetPanel.RefreshAsync(); }
         }
         catch (Exception ex)
         {

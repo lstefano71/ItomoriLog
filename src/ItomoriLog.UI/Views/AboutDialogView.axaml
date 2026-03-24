@@ -1,0 +1,63 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:ItomoriLog.UI.ViewModels"
+             x:Class="ItomoriLog.UI.Views.AboutDialogView"
+             x:DataType="vm:AboutDialogViewModel"
+             IsVisible="{Binding IsOpen}">
+
+  <!-- Dark overlay -->
+  <Grid>
+    <Border Background="#CC111418"
+            PointerPressed="OnOverlayPressed" />
+
+    <!-- Centered about panel -->
+    <Border Background="#1F2430"
+            CornerRadius="8"
+            Width="400"
+            VerticalAlignment="Center"
+            HorizontalAlignment="Center"
+            BoxShadow="0 8 32 0 #80000000"
+            Padding="32">
+      <StackPanel Spacing="12" HorizontalAlignment="Center">
+        <!-- App name -->
+        <TextBlock Text="{Binding AppName}"
+                   FontSize="28" FontWeight="Bold"
+                   Foreground="#FF6DAE"
+                   HorizontalAlignment="Center" />
+
+        <!-- Tagline -->
+        <TextBlock Text="{Binding Tagline}"
+                   FontSize="14"
+                   Foreground="#9CA3AF"
+                   HorizontalAlignment="Center" />
+
+        <!-- Version -->
+        <Border Background="#2A2F3A" CornerRadius="4" Padding="12,6"
+                HorizontalAlignment="Center">
+          <TextBlock Text="{Binding AppVersion, StringFormat='v{0}'}"
+                     FontSize="13"
+                     Foreground="#0EA5E9" />
+        </Border>
+
+        <!-- Credits -->
+        <TextBlock Text="{Binding Credits}"
+                   FontSize="12"
+                   Foreground="#D6E2F0"
+                   HorizontalAlignment="Center"
+                   Margin="0,8,0,0" />
+
+        <!-- Copyright -->
+        <TextBlock Text="{Binding Copyright}"
+                   FontSize="11"
+                   Foreground="#9CA3AF"
+                   HorizontalAlignment="Center" />
+
+        <!-- Close button -->
+        <Button Content="Close" Command="{Binding CloseCommand}"
+                Background="#FF6DAE" Foreground="#111418"
+                FontWeight="SemiBold" Padding="24,8" CornerRadius="4"
+                HorizontalAlignment="Center" Margin="0,8,0,0" />
+      </StackPanel>
+    </Border>
+  </Grid>
+</UserControl>

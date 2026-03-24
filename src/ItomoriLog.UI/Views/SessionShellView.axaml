@@ -27,23 +27,53 @@
 
     <!-- Status Bar -->
     <Border DockPanel.Dock="Bottom" Background="{StaticResource Itomori.Panel}" Padding="16,6">
-      <TextBlock Text="{Binding StatusText}" FontSize="12"
-                 Foreground="{StaticResource Itomori.SubtleForeground}" />
+      <Grid ColumnDefinitions="Auto,Auto,Auto,*">
+        <Border Background="#2A2F3A" CornerRadius="3" Padding="8,2" Margin="0,0,12,0">
+          <TextBlock Text="{Binding RecordCount, StringFormat='{}{0:N0} records'}" FontSize="12"
+                     Foreground="{StaticResource Brush.NeonCyan}" />
+        </Border>
+        <TextBlock Grid.Column="1" Text="{Binding DefaultTimezone}" FontSize="12"
+                   Foreground="{StaticResource Itomori.SubtleForeground}" Margin="0,0,12,0"
+                   VerticalAlignment="Center" />
+        <Border Grid.Column="2" Background="#2A2F3A" CornerRadius="3" Padding="8,2" Margin="0,0,12,0"
+                IsVisible="{Binding IsIngesting}">
+          <TextBlock Text="⟳ Ingesting..." FontSize="12"
+                     Foreground="{StaticResource Brush.SakuraPink}" />
+        </Border>
+        <TextBlock Grid.Column="3" Text="{Binding StatusText}" FontSize="12"
+                   Foreground="{StaticResource Itomori.SubtleForeground}"
+                   HorizontalAlignment="Right" VerticalAlignment="Center" />
+      </Grid>
     </Border>
+
+    <!-- Timeline at top (below header) -->
+    <views:TimelineCanvasView DockPanel.Dock="Top"
+                               DataContext="{Binding Timeline}"
+                               IsVisible="{Binding Timeline, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
     <!-- Content Area -->
     <Grid>
-      <!-- Log Grid (shown when records exist or after ingest) -->
-      <SplitView IsPaneOpen="{Binding LogsPage.IsDetailOpen}"
-                 DisplayMode="Inline"
-                 PanePlacement="Right"
-                 OpenPaneLength="420"
-                 IsVisible="{Binding LogsPage, Converter={x:Static ObjectConverters.IsNotNull}}">
-        <SplitView.Pane>
-          <views:DetailDrawerView DataContext="{Binding LogsPage}" />
-        </SplitView.Pane>
-        <views:LogGridView DataContext="{Binding LogsPage}" />
-      </SplitView>
+      <!-- Main browse layout: facet sidebar + grid + detail drawer -->
+      <Grid ColumnDefinitions="Auto,*"
+            IsVisible="{Binding LogsPage, Converter={x:Static ObjectConverters.IsNotNull}}">
+        <!-- Facet sidebar -->
+        <views:FacetPanelView Grid.Column="0"
+                               DataContext="{Binding FacetPanel}"
+                               IsVisible="{Binding FacetPanel, Converter={x:Static ObjectConverters.IsNotNull}}"
+                               Width="220" />
+
+        <!-- Grid + Detail drawer -->
+        <SplitView Grid.Column="1"
+                   IsPaneOpen="{Binding LogsPage.IsDetailOpen}"
+                   DisplayMode="Inline"
+                   PanePlacement="Right"
+                   OpenPaneLength="420">
+          <SplitView.Pane>
+            <views:DetailDrawerView DataContext="{Binding LogsPage}" />
+          </SplitView.Pane>
+          <views:LogGridView DataContext="{Binding LogsPage}" />
+        </SplitView>
+      </Grid>
 
       <!-- Empty state CTA -->
       <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16"

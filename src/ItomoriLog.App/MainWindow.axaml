@@ -1,0 +1,60 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:ItomoriLog.UI.ViewModels"
+        xmlns:views="using:ItomoriLog.UI.Views"
+        x:Class="ItomoriLog.App.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="ItomoriLog — Braiding time from your logs"
+        Width="1280" Height="800"
+        MinWidth="800" MinHeight="600"
+        Background="{StaticResource Itomori.Background}">
+
+  <Window.DataTemplates>
+    <DataTemplate DataType="vm:WelcomeViewModel">
+      <views:WelcomeView />
+    </DataTemplate>
+    <DataTemplate DataType="vm:SessionShellViewModel">
+      <views:SessionShellView />
+    </DataTemplate>
+    <DataTemplate DataType="vm:DetectionWizardViewModel">
+      <views:DetectionWizardView />
+    </DataTemplate>
+  </Window.DataTemplates>
+
+  <Panel>
+    <Grid RowDefinitions="Auto,*,Auto">
+      <!-- Title Bar -->
+      <Border Grid.Row="0" Background="{StaticResource Itomori.Panel}" Padding="16,10">
+        <StackPanel Orientation="Horizontal" Spacing="12">
+          <TextBlock Text="ItomoriLog"
+                     FontSize="20" FontWeight="SemiBold"
+                     Foreground="{StaticResource Brush.SakuraPink}" />
+          <TextBlock Text="Braiding time from your logs"
+                     FontSize="14"
+                     Foreground="{StaticResource Itomori.SubtleForeground}"
+                     VerticalAlignment="Center" />
+        </StackPanel>
+      </Border>
+
+      <!-- Content Area (view router) -->
+      <ContentControl Grid.Row="1" Content="{Binding CurrentView}" />
+
+      <!-- Status Bar -->
+      <Border Grid.Row="2" Background="{StaticResource Itomori.Panel}" Padding="16,6">
+        <TextBlock Text="Ready"
+                   FontSize="12"
+                   Foreground="{StaticResource Itomori.SubtleForeground}" />
+      </Border>
+    </Grid>
+
+    <!-- Command Palette overlay (on top of everything) -->
+    <views:CommandPaletteView DataContext="{Binding CommandPalette}" />
+
+    <!-- Export dialog overlay -->
+    <views:ExportDialogView DataContext="{Binding ExportDialog}" />
+
+    <!-- About dialog overlay -->
+    <views:AboutDialogView DataContext="{Binding AboutDialog}" />
+  </Panel>
+
+</Window>
