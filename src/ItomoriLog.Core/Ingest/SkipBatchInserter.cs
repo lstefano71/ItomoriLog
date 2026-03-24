@@ -1,11 +1,13 @@
 using DuckDB.NET.Data;
 using ItomoriLog.Core.Model;
+using System.Text;
 
 namespace ItomoriLog.Core.Ingest;
 
 public sealed class SkipBatchInserter
 {
     private readonly DuckDBConnection _connection;
+    private const int RowsPerStatement = 500;
 
     public SkipBatchInserter(DuckDBConnection connection)
     {
@@ -17,24 +19,36 @@ public sealed class SkipBatchInserter
         if (rows.Count == 0)
             return;
 
-        using var cmd = _connection.CreateCommand();
-        cmd.CommandText = """
+        for (int i = 0; i < rows.Count; i += RowsPerStatement)
+        {
+            var count = Math.Min(RowsPerStatement, rows.Count - i);
+            await InsertChunkAsync(rows, i, count, sessionId, ct);
+        }
+    }
+
+    private async Task InsertChunkAsync(IReadOnlyList<SkipRow> rows, int offset, int count, string? sessionId, CancellationToken ct)
+    {
+        var sql = new StringBuilder("""
             INSERT INTO skips (
                 session_id, logical_source_id, physical_file_id, segment_id, segment_seq,
                 start_line, end_line, start_offset, end_offset,
                 reason_code, reason_detail, sample_prefix, detector_profile_id, utc_logged_at
-            ) VALUES (
-                $1, $2, $3, $4, $5,
-                $6, $7, $8, $9,
-                $10, $11, $12, $13, $14
-            )
-            """;
+            ) VALUES
+            """);
 
-        foreach (var row in rows)
+        using var cmd = _connection.CreateCommand();
+
+        for (int i = 0; i < count; i++)
         {
             ct.ThrowIfCancellationRequested();
 
-            cmd.Parameters.Clear();
+            if (i > 0)
+                sql.Append(',');
+
+            var p = (i * 14) + 1;
+            sql.Append($"(${p}, ${p+1}, ${p+2}, ${p+3}, ${p+4}, ${p+5}, ${p+6}, ${p+7}, ${p+8}, ${p+9}, ${p+10}, ${p+11}, ${p+12}, ${p+13})");
+
+            var row = rows[offset + i];
             cmd.Parameters.Add(new DuckDBParameter { Value = (object?)sessionId ?? DBNull.Value });
             cmd.Parameters.Add(new DuckDBParameter { Value = row.LogicalSourceId });
             cmd.Parameters.Add(new DuckDBParameter { Value = row.PhysicalFileId });
@@ -49,7 +63,9 @@ public sealed class SkipBatchInserter
             cmd.Parameters.Add(new DuckDBParameter { Value = (object?)row.SamplePrefix ?? DBNull.Value });
             cmd.Parameters.Add(new DuckDBParameter { Value = (object?)row.DetectorProfileId ?? DBNull.Value });
             cmd.Parameters.Add(new DuckDBParameter { Value = row.UtcLoggedAt.UtcDateTime });
-            await cmd.ExecuteNonQueryAsync(ct);
         }
+
+        cmd.CommandText = sql.ToString();
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 }
