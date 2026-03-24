@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "skills": {
+    "design-an-interface": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "computedHash": "f3f225914515407b8224e8ec6187db337c5e65bad0703936a0acb3f802947a7d"
+    },
+    "edit-article": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "computedHash": "e0c50de6d64f528cb4ea32b142e2ec499e291efbc6996369ac4a1eea76d4870c"
+    },
+    "grill-me": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "computedHash": "d85881e7b2f6e9c718d45ac9954c1d8e05e21f9b6f3ca58062ae80f89474750b"
+    },
+    "improve-codebase-architecture": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "computedHash": "92ffd85a803661d754221f7aba260ee2065d3402eadf78872e227146fe1d6fbf"
+    },
+    "prd-to-plan": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "computedHash": "b602c684d70f1a27bce4d9db8fe5cca15e2923c083d6e4e6eda9d3fc0895afed"
+    }
+  }
+}
