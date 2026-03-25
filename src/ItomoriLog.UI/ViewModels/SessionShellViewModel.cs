@@ -31,6 +31,7 @@ public class SessionShellViewModel : ViewModelBase
     private readonly HashSet<string> _activeIngestPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Dictionary<string, IngestProgressUpdate>> _archiveEntryProgress = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _liveBrowseRefreshLock = new();
+    private readonly object _queryStatusLock = new();
 
     private DuckLakeConnectionFactory? _sessionFactory;
     private string _title = "";
@@ -61,6 +62,9 @@ public class SessionShellViewModel : ViewModelBase
     private bool _liveBrowseRefreshQueued;
     private bool _liveBrowseRefreshDirty;
     private DateTimeOffset _lastLiveBrowseRefreshUtc = DateTimeOffset.MinValue;
+    private string? _sessionStatusDetail;
+    private string? _queryStatusDetail;
+    private IDisposable? _logsPageStatusSubscription;
 
     public SessionShellViewModel(MainWindowViewModel main, string sessionFolder)
     {
@@ -242,7 +246,24 @@ public class SessionShellViewModel : ViewModelBase
 
     public LogsPageViewModel? LogsPage {
         get => _logsPage;
-        set => this.RaiseAndSetIfChanged(ref _logsPage, value);
+        set {
+            if (ReferenceEquals(_logsPage, value))
+                return;
+
+            _logsPageStatusSubscription?.Dispose();
+            _logsPageStatusSubscription = null;
+            _logsPage = value;
+            this.RaisePropertyChanged();
+
+            if (_logsPage is not null) {
+                _logsPageStatusSubscription = _logsPage
+                    .WhenAnyValue(vm => vm.QueryParseError)
+                    .Subscribe(OnLogsPageStatusChanged);
+                OnLogsPageStatusChanged(_logsPage.QueryParseError);
+            } else {
+                OnLogsPageStatusChanged(null);
+            }
+        }
     }
 
     public TimelineViewModel? Timeline {
@@ -331,6 +352,8 @@ public class SessionShellViewModel : ViewModelBase
 
     public void ReleaseSessionLock()
     {
+        _logsPageStatusSubscription?.Dispose();
+        _logsPageStatusSubscription = null;
         _crashRecoveryService?.ReleaseLock();
         _sessionFactory?.Dispose();
         _sessionFactory = null;
@@ -384,7 +407,7 @@ public class SessionShellViewModel : ViewModelBase
         IsStagingPaneOpen = RecordCount == 0;
 
         await RefreshBrowseAsync(resetFilters: false, invalidateCache: true);
-        StatusText = BuildSessionStatus(RecordCount == 0 ? "Session ready for ingestion." : "Session loaded.");
+        UpdateSessionStatus(RecordCount == 0 ? "Session ready for ingestion." : "Session loaded.");
         RaiseStagingStateProperties();
     }
 
@@ -422,7 +445,7 @@ public class SessionShellViewModel : ViewModelBase
 
         _recoveryBannerDismissed = true;
         CrashRecovery = new CrashRecoveryViewModel();
-        StatusText = BuildSessionStatus("Recovering interrupted ingest...");
+        UpdateSessionStatus("Recovering interrupted ingest...");
 
         var conn = await GetSessionConnectionAsync();
         await SchemaInitializer.EnsureSchemaAsync(conn);
@@ -431,7 +454,7 @@ public class SessionShellViewModel : ViewModelBase
         _crashRecoveryService.AcquireLock();
 
         if (resumablePaths.Count == 0) {
-            StatusText = BuildSessionStatus("Nothing resumable was found.");
+            UpdateSessionStatus("Nothing resumable was found.");
             return;
         }
 
@@ -443,11 +466,11 @@ public class SessionShellViewModel : ViewModelBase
 
         if (stagedItems.Any(item => item.RequiresDetectionReview)) {
             SelectedStagedSource = stagedItems.First(item => item.RequiresDetectionReview);
-            StatusText = BuildSessionStatus("Interrupted ingest recovered. Review low-confidence guesses before resuming.");
+            UpdateSessionStatus("Interrupted ingest recovered. Review low-confidence guesses before resuming.");
             return;
         }
 
-        StatusText = BuildSessionStatus($"Resuming interrupted ingest for {stagedItems.Count} file(s)...");
+        UpdateSessionStatus($"Resuming interrupted ingest for {stagedItems.Count} file(s)...");
         await IngestFilesAsync(stagedItems.Select(item => item.SourcePath).ToArray());
     }
 
@@ -458,14 +481,14 @@ public class SessionShellViewModel : ViewModelBase
 
         if (HasSniffingInProgress) {
             OpenStagingPane();
-            StatusText = BuildSessionStatus("Please wait for sniffing to finish.");
+            UpdateSessionStatus("Please wait for sniffing to finish.");
             return;
         }
 
         if (HasPendingDetectionReview) {
             OpenStagingPane();
             SelectedStagedSource = StagedSources.FirstOrDefault(s => s.RequiresDetectionReview) ?? SelectedStagedSource;
-            StatusText = BuildSessionStatus("Review low-confidence guesses before ingesting.");
+            UpdateSessionStatus("Review low-confidence guesses before ingesting.");
             return;
         }
 
@@ -487,7 +510,7 @@ public class SessionShellViewModel : ViewModelBase
 
         ResetPerItemProgress(requestedPaths);
         ResetOverallProgress();
-        StatusText = BuildSessionStatus($"Ingesting {requestedPaths.Length} staged source(s)...");
+        UpdateSessionStatus($"Ingesting {requestedPaths.Length} staged source(s)...");
 
         try {
             var conn = await GetSessionConnectionAsync();
@@ -538,7 +561,7 @@ public class SessionShellViewModel : ViewModelBase
                     defaultTz,
                     CancellationToken.None);
                 if (!reingestResult.Success) {
-                    StatusText = BuildSessionStatus($"Re-ingest failed for segment {segmentId}: {reingestResult.Error}");
+                    UpdateSessionStatus($"Re-ingest failed for segment {segmentId}: {reingestResult.Error}");
                     reingestFailures++;
                 } else {
                     successfulReingests++;
@@ -566,12 +589,12 @@ public class SessionShellViewModel : ViewModelBase
                 var reingestOnlyDetail = reingestFailures == 0
                     ? $"Re-ingested {successfulReingests} segment(s)."
                     : $"Re-ingest finished with {successfulReingests} success and {reingestFailures} failure.";
-                StatusText = BuildSessionStatus(reingestOnlyDetail);
+                UpdateSessionStatus(reingestOnlyDetail);
                 return;
             }
 
             if (plan.FilesToIngest.Count == 0) {
-                StatusText = BuildSessionStatus("No new files needed ingestion.");
+                UpdateSessionStatus("No new files needed ingestion.");
                 return;
             }
 
@@ -607,14 +630,14 @@ public class SessionShellViewModel : ViewModelBase
             await RefreshBrowseAsync(resetFilters: wasEmptySession && result.TotalRows > 0, invalidateCache: true);
             AutoHideStagingPaneIfAllCompleted();
 
-            StatusText = result.Status == "completed"
-                ? BuildSessionStatus(
-                    reingestFailures == 0
+            UpdateSessionStatus(
+                result.Status == "completed"
+                    ? reingestFailures == 0
                         ? $"{result.FilesProcessed} file(s) ingested, {successfulReingests} segment(s) re-ingested, {result.TotalRows:N0} rows added."
-                        : $"{result.FilesProcessed} file(s) ingested, {successfulReingests} segment(s) re-ingested, {reingestFailures} failed, {result.TotalRows:N0} rows added.")
-                : BuildSessionStatus("Ingest failed.");
+                        : $"{result.FilesProcessed} file(s) ingested, {successfulReingests} segment(s) re-ingested, {reingestFailures} failed, {result.TotalRows:N0} rows added."
+                    : "Ingest failed.");
         } catch (Exception ex) {
-            StatusText = BuildSessionStatus($"Ingest error: {ex.Message}");
+            UpdateSessionStatus($"Ingest error: {ex.Message}");
         } finally {
             lock (_liveBrowseRefreshLock) {
                 _liveBrowseRefreshQueued = false;
@@ -654,7 +677,7 @@ public class SessionShellViewModel : ViewModelBase
             return;
 
         if (IsIngesting) {
-            StatusText = BuildSessionStatus("Cannot re-ingest while ingestion is active.");
+            UpdateSessionStatus("Cannot re-ingest while ingestion is active.");
             return;
         }
 
@@ -678,7 +701,7 @@ public class SessionShellViewModel : ViewModelBase
                     bytesTotal: 0,
                     recordsProcessed: 0,
                     message: "No ingested segments found.");
-                StatusText = BuildSessionStatus($"No ingested segments found for {Path.GetFileName(item.SourcePath)}.");
+                UpdateSessionStatus($"No ingested segments found for {Path.GetFileName(item.SourcePath)}.");
                 return;
             }
 
@@ -702,7 +725,7 @@ public class SessionShellViewModel : ViewModelBase
                     replacedRows += result.NewRowCount;
                 } else {
                     failed++;
-                    StatusText = BuildSessionStatus($"Re-ingest failed for segment {segmentId}: {result.Error}");
+                    UpdateSessionStatus($"Re-ingest failed for segment {segmentId}: {result.Error}");
                 }
             }
 
@@ -721,9 +744,10 @@ public class SessionShellViewModel : ViewModelBase
                 await PersistFeedbackRuleAsync(globalStore, item);
             }
 
-            StatusText = failed == 0
-                ? BuildSessionStatus($"Re-ingested {ok} segment(s), refreshing {replacedRows:N0} rows.")
-                : BuildSessionStatus($"Re-ingest finished with {ok} success and {failed} failure.");
+            UpdateSessionStatus(
+                failed == 0
+                    ? $"Re-ingested {ok} segment(s), refreshing {replacedRows:N0} rows."
+                    : $"Re-ingest finished with {ok} success and {failed} failure.");
         } finally {
             IsIngesting = false;
         }
@@ -1288,26 +1312,26 @@ public class SessionShellViewModel : ViewModelBase
     private async Task StagePathsAsync(IReadOnlyList<string> paths)
     {
         if (paths.Count == 0) {
-            StatusText = BuildSessionStatus("No files were staged.");
+            UpdateSessionStatus("No files were staged.");
             return;
         }
 
         OpenStagingPane();
-        StatusText = BuildSessionStatus($"Staging {paths.Count} path(s)...");
+        UpdateSessionStatus($"Staging {paths.Count} path(s)...");
         await Task.Yield();
 
         var expandedPaths = await Task.Run(() => ExpandInputPaths(paths).ToArray());
         var stagedItems = await RunOnUiAsync(() => StageExpandedPathsCore(expandedPaths, openPane: false, queueSniff: true));
         if (stagedItems.Count == 0) {
             await RunOnUiAsync(() => {
-                StatusText = BuildSessionStatus("No files were staged.");
+                UpdateSessionStatus("No files were staged.");
                 return 0;
             });
             return;
         }
 
         await RunOnUiAsync(() => {
-            StatusText = BuildSessionStatus($"Staged {stagedItems.Count} file(s).");
+            UpdateSessionStatus($"Staged {stagedItems.Count} file(s).");
             return 0;
         });
     }
@@ -1422,7 +1446,7 @@ public class SessionShellViewModel : ViewModelBase
         if (HasPendingDetectionReview) {
             OpenStagingPane();
             SelectedStagedSource = StagedSources.FirstOrDefault(source => source.RequiresDetectionReview);
-            StatusText = BuildSessionStatus("Review low-confidence guesses before ingesting.");
+            UpdateSessionStatus("Review low-confidence guesses before ingesting.");
             return;
         }
 
@@ -1431,7 +1455,7 @@ public class SessionShellViewModel : ViewModelBase
             .Select(source => source.SourcePath)
             .ToArray();
         if (stagedPaths.Length == 0) {
-            StatusText = BuildSessionStatus("No staged files are waiting to ingest.");
+            UpdateSessionStatus("No staged files are waiting to ingest.");
             return;
         }
 
@@ -1455,7 +1479,7 @@ public class SessionShellViewModel : ViewModelBase
         var description = string.IsNullOrWhiteSpace(EditableDescription) ? "" : EditableDescription.Trim();
         var timezone = SessionDefaults.ResolveDefaultTimezone(EditableTimezone);
         if (!SessionDefaults.IsValidTimezoneId(timezone)) {
-            StatusText = BuildSessionStatus($"Invalid timezone '{timezone}'.");
+            UpdateSessionStatus($"Invalid timezone '{timezone}'.");
             return;
         }
 
@@ -1473,7 +1497,7 @@ public class SessionShellViewModel : ViewModelBase
         if (LogsPage is not null)
             LogsPage.SetDisplayTimezone(DefaultTimezone);
 
-        StatusText = BuildSessionStatus("Session header updated.");
+        UpdateSessionStatus("Session header updated.");
     }
 
     private void CancelHeaderEdit() => IsEditingHeader = false;
@@ -1659,7 +1683,7 @@ public class SessionShellViewModel : ViewModelBase
                 _lastLiveBrowseRefreshUtc = DateTimeOffset.UtcNow;
                 await RefreshBrowseDuringIngestAsync();
             } catch (Exception ex) {
-                RunOnUi(() => StatusText = BuildSessionStatus($"Browse refresh failed during ingest: {ex.Message}"));
+                RunOnUi(() => UpdateSessionStatus($"Browse refresh failed during ingest: {ex.Message}"));
             } finally {
                 _liveBrowseRefreshGate.Release();
             }
@@ -1800,11 +1824,41 @@ public class SessionShellViewModel : ViewModelBase
     private string BuildSessionStatus(string detail) =>
         $"{detail} | {_sessionFolder}";
 
+    private void OnLogsPageStatusChanged(string? queryParseError)
+    {
+        lock (_queryStatusLock) {
+            _queryStatusDetail = !string.IsNullOrWhiteSpace(queryParseError)
+                ? $"Query parse error: {queryParseError}"
+                : null;
+        }
+
+        RefreshCompositeStatusText();
+    }
+
+    private void UpdateSessionStatus(string detail)
+    {
+        lock (_queryStatusLock) {
+            _sessionStatusDetail = detail;
+        }
+
+        RefreshCompositeStatusText();
+    }
+
+    private void RefreshCompositeStatusText()
+    {
+        string detail;
+        lock (_queryStatusLock) {
+            detail = _queryStatusDetail ?? _sessionStatusDetail ?? "Ready";
+        }
+
+        StatusText = BuildSessionStatus(detail);
+    }
+
     private void DismissRecoveryBanner()
     {
         _recoveryBannerDismissed = true;
         CrashRecovery = new CrashRecoveryViewModel();
-        StatusText = BuildSessionStatus("Recovery dismissed.");
+        UpdateSessionStatus("Recovery dismissed.");
     }
 
     private void ConfirmDetectionChoice(StagedSourceItemViewModel? item)

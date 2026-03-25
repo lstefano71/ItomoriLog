@@ -78,6 +78,40 @@ public class LogsPageViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task RefreshResultsAsync_InvalidTickQuery_SetsParseErrorAndStatus()
+    {
+        await SeedRowsAsync(10);
+
+        var vm = new LogsPageViewModel(_factory, "UTC") {
+            QueryText = """timestamp IN 'not a tick expression'"""
+        };
+
+        await vm.RefreshResultsAsync(invalidateCache: true);
+
+        vm.QueryParseError.Should().NotBeNullOrWhiteSpace();
+        vm.StatusText.Should().Contain("Query parse error:");
+        vm.CurrentPage.Should().BeEmpty();
+        vm.HasNextPage.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RefreshResultsAsync_InvalidTickQuery_WithTimelineSubscriber_KeepsParseError()
+    {
+        await SeedRowsAsync(10);
+
+        var vm = new LogsPageViewModel(_factory, "UTC") {
+            QueryText = """timestamp IN '2026-13-24T20:29..$latest 123asd'"""
+        };
+        vm.TimelineFilterChanged += _ => { };
+
+        await vm.RefreshResultsAsync(invalidateCache: true);
+
+        vm.QueryParseError.Should().NotBeNullOrWhiteSpace();
+        vm.QueryParseError.Should().Contain("parse", because: "invalid TICK must remain visible even when timeline listeners rebuild filters");
+        vm.StatusText.Should().Contain("Query parse error:");
+    }
+
+    [Fact]
     public async Task ClearQueryCommand_ClearsQueryText()
     {
         var vm = new LogsPageViewModel(_factory, "UTC") {

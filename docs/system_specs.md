@@ -137,3 +137,5 @@ QuestDB documents the behavior of `WHERE ts IN 'TICK'`, multiple ranges, busines
 
 * **Single‑file publish**, **AOT** where possible (Avalonia supported AOT).
 * Bundle DuckDB + DuckLake extension natives.
+* Current profile: `src\ItomoriLog.App\Properties\PublishProfiles\FolderProfile.pubxml` (Native AOT, trimmed, self-contained, `win-x64`).
+* Publish command: `dotnet publish .\src\ItomoriLog.App\ItomoriLog.App.csproj -c Release /p:PublishProfile=FolderProfile`.

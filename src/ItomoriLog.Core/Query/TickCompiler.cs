@@ -10,7 +10,7 @@ namespace ItomoriLog.Core.Query;
 /// Parses TICK interval expressions (a subset of QuestDB syntax) and resolves them
 /// to one or more concrete <see cref="UtcInterval"/> half-open [start, end) ranges.
 /// </summary>
-public sealed class TickCompiler : ITickCompiler
+public sealed partial class TickCompiler : ITickCompiler
 {
     // -----------------------------------------------------------------------
     //  ISO-8601 date/datetime formats (full -> least precision)
@@ -38,9 +38,7 @@ public sealed class TickCompiler : ITickCompiler
         "yyyy-MM-dd",
     ];
 
-    private static readonly Regex DurationPattern = new(
-        @"(\d+)\s*(ms|us|[yMwdhmsTu])",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex DurationPattern = DurationPatternRegex();
 
     // =======================================================================
     //  Public API
@@ -94,6 +92,9 @@ public sealed class TickCompiler : ITickCompiler
 
     public static string FormatTimestamp(DateTimeOffset ts)
         => ts.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss.ffffff", CultureInfo.InvariantCulture);
+
+    [GeneratedRegex(@"(\d+)\s*(ms|us|[yMwdhmsTu])", RegexOptions.CultureInvariant)]
+    private static partial Regex DurationPatternRegex();
 
     // =======================================================================
     //  Interval merging - half-open [start, end)

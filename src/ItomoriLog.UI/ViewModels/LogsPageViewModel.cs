@@ -180,8 +180,8 @@ public class LogsPageViewModel : ViewModelBase
 
     public event Action<FilterState>? TimelineFilterChanged;
 
-    public FilterState BuildCurrentFilterState() => BuildFilter();
-    public FilterState BuildCurrentTimelineMatchFilterState() => BuildTimelineMatchFilter(BuildFilter());
+    public FilterState BuildCurrentFilterState() => BuildFilter(updateParseError: true);
+    public FilterState BuildCurrentTimelineMatchFilterState() => BuildTimelineMatchFilter(BuildFilter(updateParseError: false));
 
     public void InvalidateCache()
     {
@@ -237,10 +237,11 @@ public class LogsPageViewModel : ViewModelBase
         await RefreshResultsAsync(invalidateCache);
     }
 
-    private FilterState BuildFilter()
+    private FilterState BuildFilter(bool updateParseError)
     {
         var parsed = _searchParser.Parse(QueryText);
-        QueryParseError = parsed.Error;
+        if (updateParseError)
+            QueryParseError = parsed.Error;
         if (parsed.Error is not null) {
             return new FilterState {
                 StartUtc = StartUtc,
@@ -311,7 +312,7 @@ public class LogsPageViewModel : ViewModelBase
     {
         IsLoading = true;
         try {
-            var filter = BuildFilter();
+            var filter = BuildFilter(updateParseError: true);
             if (QueryParseError is not null) {
                 await RunOnMainThreadAsync(() => {
                     StatusText = $"Query parse error: {QueryParseError}";
@@ -444,6 +445,7 @@ public class LogsPageViewModel : ViewModelBase
     private static FilterState BuildTimelineMatchFilter(FilterState filter) =>
         filter with {
             StartUtc = null,
-            EndUtc = null
+            EndUtc = null,
+            TickExpression = null
         };
 }

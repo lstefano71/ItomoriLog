@@ -57,12 +57,10 @@ public sealed record FeedbackSuggestionViewModel(
         UseCount == 1 ? "used once" : $"used {UseCount} times";
 }
 
-public class StagedSourceItemViewModel : ReactiveObject
+public partial class StagedSourceItemViewModel : ReactiveObject
 {
     private static readonly TimeSpan MinStableRateWindow = TimeSpan.FromSeconds(1);
-    private static readonly Regex FixedOffsetRegex = new(
-        @"^(?:UTC)?(?<sign>[+-])(?<hours>\d{1,2}):(?<minutes>\d{2})$",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex FixedOffsetRegex = FixedOffsetRegexImpl();
 
     private string _sourcePath;
     private bool _isDirectory;
@@ -123,6 +121,9 @@ public class StagedSourceItemViewModel : ReactiveObject
             RaiseComputedStateProperties();
         }
     }
+
+    [GeneratedRegex(@"^(?:UTC)?(?<sign>[+-])(?<hours>\d{1,2}):(?<minutes>\d{2})$", RegexOptions.IgnoreCase)]
+    private static partial Regex FixedOffsetRegexImpl();
 
     public bool IsDirectory {
         get => _isDirectory;

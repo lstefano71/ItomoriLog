@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <IsAotCompatible>true</IsAotCompatible>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>true</EnableAotAnalyzer>
+    <WarningsAsErrors>$(WarningsAsErrors);IL2*;IL3*;IL5*;IL6*</WarningsAsErrors>
+  </PropertyGroup>
+</Project>

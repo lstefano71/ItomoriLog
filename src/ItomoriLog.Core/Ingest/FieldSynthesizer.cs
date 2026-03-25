@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 
 namespace ItomoriLog.Core.Ingest;
 
-public sealed class FieldSynthesizer
+public sealed partial class FieldSynthesizer
 {
     private readonly Regex? _fieldRegex;
 
@@ -12,11 +12,11 @@ public sealed class FieldSynthesizer
     public static IReadOnlyList<Regex> CommonPatterns { get; } =
     [
         // Level + Source + TaskId + Message: "INFO [MyApp.Core] [task-123] Starting"
-        new Regex(@"^\s*(?<level>\w+)\s+\[(?<subsource>[^\]]+)\]\s*\[(?<task_id>[^\]]+)\]\s*(?<message>.+)$", RegexOptions.Compiled),
+        LevelSourceTaskMessageRegex(),
         // Level + Source + Message: "INFO [MyApp.Core] Starting"
-        new Regex(@"^\s*(?<level>\w+)\s+\[(?<subsource>[^\]]+)\]\s*(?<message>.+)$", RegexOptions.Compiled),
+        LevelSourceMessageRegex(),
         // Level + Message: "INFO Starting application"
-        new Regex(@"^\s*(?<level>\w+)\s+(?<message>.+)$", RegexOptions.Compiled),
+        LevelMessageRegex(),
     ];
 
     public FieldSynthesizer(Regex? fieldRegex = null)
@@ -88,6 +88,15 @@ public sealed class FieldSynthesizer
             _ => raw.ToUpperInvariant(),
         };
     }
+
+    [GeneratedRegex(@"^\s*(?<level>\w+)\s+\[(?<subsource>[^\]]+)\]\s*\[(?<task_id>[^\]]+)\]\s*(?<message>.+)$")]
+    private static partial Regex LevelSourceTaskMessageRegex();
+
+    [GeneratedRegex(@"^\s*(?<level>\w+)\s+\[(?<subsource>[^\]]+)\]\s*(?<message>.+)$")]
+    private static partial Regex LevelSourceMessageRegex();
+
+    [GeneratedRegex(@"^\s*(?<level>\w+)\s+(?<message>.+)$")]
+    private static partial Regex LevelMessageRegex();
 }
 
 public sealed record FieldExtractionResult(

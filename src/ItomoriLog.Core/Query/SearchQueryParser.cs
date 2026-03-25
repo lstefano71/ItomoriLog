@@ -12,11 +12,9 @@ public sealed record SearchQueryParseResult(
     string? TickExpression,
     string? Error);
 
-public sealed class SearchQueryParser
+public sealed partial class SearchQueryParser
 {
-    private static readonly Regex TickClauseRegex = new(
-        """\btimestamp\s+in\s*(?<quote>['"])(?<tick>(?:\\.|(?!\k<quote>).)*)\k<quote>""",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex TickClauseRegex = TickClauseRegexImpl();
 
     public SearchQueryParseResult Parse(string? queryText)
     {
@@ -55,11 +53,11 @@ public sealed class SearchQueryParser
 
     private static string NormalizeResidualQuery(string text)
     {
-        var normalized = Regex.Replace(text, @"\s+", " ").Trim();
+        var normalized = WhitespaceRegex().Replace(text, " ").Trim();
         while (true) {
             var previous = normalized;
-            normalized = Regex.Replace(normalized, @"^(AND|OR)\s+", "", RegexOptions.IgnoreCase).Trim();
-            normalized = Regex.Replace(normalized, @"\s+(AND|OR)$", "", RegexOptions.IgnoreCase).Trim();
+            normalized = LeadingBooleanRegex().Replace(normalized, "").Trim();
+            normalized = TrailingBooleanRegex().Replace(normalized, "").Trim();
             if (normalized == previous)
                 break;
         }
@@ -82,6 +80,18 @@ public sealed class SearchQueryParser
         LParen,
         RParen
     }
+
+    [GeneratedRegex("""\btimestamp\s+in\s*(?<quote>['"])(?<tick>(?:\\.|(?!\k<quote>).)*)\k<quote>""", RegexOptions.IgnoreCase)]
+    private static partial Regex TickClauseRegexImpl();
+
+    [GeneratedRegex(@"\s+")]
+    private static partial Regex WhitespaceRegex();
+
+    [GeneratedRegex(@"^(AND|OR)\s+", RegexOptions.IgnoreCase)]
+    private static partial Regex LeadingBooleanRegex();
+
+    [GeneratedRegex(@"\s+(AND|OR)$", RegexOptions.IgnoreCase)]
+    private static partial Regex TrailingBooleanRegex();
 
     private readonly record struct Token(TokenKind Kind, string Text);
 
