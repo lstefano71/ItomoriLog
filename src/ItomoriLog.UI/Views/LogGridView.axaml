@@ -4,7 +4,7 @@
              x:Class="ItomoriLog.UI.Views.LogGridView"
              x:DataType="vm:LogsPageViewModel">
 
-  <Grid RowDefinitions="*">
+  <Grid RowDefinitions="*,Auto">
     <DataGrid Grid.Row="0"
               Name="LogDataGrid"
               ItemsSource="{Binding CurrentPage}"
@@ -86,6 +86,12 @@
         </DataGridTemplateColumn>
       </DataGrid.Columns>
     </DataGrid>
+
+    <Border Grid.Row="1" Background="{StaticResource Itomori.Panel}" Padding="10,4">
+      <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
+        <Button Content="Detail" Command="{Binding ToggleDetailCommand}" />
+      </StackPanel>
+    </Border>
   </Grid>
 
 </UserControl>

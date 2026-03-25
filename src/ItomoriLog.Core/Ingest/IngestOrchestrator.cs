@@ -20,14 +20,14 @@ public sealed class IngestOrchestrator
     public IngestOrchestrator(
         DuckDBConnection connection,
         DetectionEngine? detectionEngine = null,
-        int maxConcurrency = 8,
+        int maxConcurrency = 2,
         int batchChannelCapacity = 16,
-        int batchesPerTransaction = 5,
+        int batchesPerTransaction = 2,
         IReadOnlyDictionary<string, FileFormatOverride>? formatOverrides = null)
     {
         _connection = connection;
         _detectionEngine = detectionEngine ?? new DetectionEngine();
-        _maxConcurrency = maxConcurrency;
+        _maxConcurrency = (-1 == maxConcurrency) ? Environment.ProcessorCount : maxConcurrency;
         _batchChannelCapacity = batchChannelCapacity;
         _batchesPerTransaction = batchesPerTransaction;
         _formatOverrides = formatOverrides ?? new Dictionary<string, FileFormatOverride>(StringComparer.OrdinalIgnoreCase);
@@ -329,7 +329,7 @@ public sealed class IngestOrchestrator
         using var recordReader = CreateReader(detection.Boundary, textReader, skipLogger, byteCounter);
 
         // Read and batch records
-        var batch = new List<LogRow>(50_000);
+        var batch = new List<LogRow>(25_000);
         long recordIndex = 0;
         var synthesizer = new FieldSynthesizer();
         DateTimeOffset? minTs = null;
