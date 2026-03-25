@@ -89,7 +89,29 @@ public class LogsPageViewModelTests : IDisposable
         vm.CurrentPage[^1].Message.Should().Be("Event #4499");
     }
 
-    private async Task SeedRowsAsync(int count)
+    [Fact]
+    public async Task RefreshResultsAsync_PreserveLoadedRowsAndSelection_KeepsBrowseContext()
+    {
+        await SeedRowsAsync(2500);
+
+        var vm = new LogsPageViewModel(_factory, "UTC");
+        await vm.RefreshResultsAsync(invalidateCache: true);
+        vm.CurrentPage.Should().HaveCount(2000);
+
+        await ExecuteCommandAsync(vm.LoadMoreCommand);
+        vm.CurrentPage.Should().HaveCount(2500);
+        vm.SelectedRow = vm.CurrentPage[1499];
+
+        await SeedRowsAsync(500, startIndex: 2500);
+
+        await vm.RefreshResultsAsync(invalidateCache: true, preserveLoadedRowCount: true);
+
+        vm.CurrentPage.Count.Should().BeGreaterThanOrEqualTo(2500);
+        vm.SelectedRow.Should().NotBeNull();
+        vm.SelectedRow!.Message.Should().Be("Event #1499");
+    }
+
+    private async Task SeedRowsAsync(int count, int startIndex = 0)
     {
         var conn = await _factory.GetConnectionAsync();
         await SchemaInitializer.EnsureSchemaAsync(conn);
@@ -100,19 +122,21 @@ public class LogsPageViewModelTests : IDisposable
 
         for (var i = 0; i < count; i++)
         {
+            var actualIndex = startIndex + i;
+            var timestamp = baseTs.AddSeconds(actualIndex);
             rows.Add(new LogRow(
-                TimestampUtc: baseTs.AddSeconds(i),
+                TimestampUtc: timestamp,
                 TimestampBasis: TimeBasis.Utc,
                 TimestampEffectiveOffsetMinutes: 0,
-                TimestampOriginal: baseTs.AddSeconds(i).ToString("O"),
+                TimestampOriginal: timestamp.ToString("O"),
                 LogicalSourceId: "source-1",
                 SourcePath: @"C:\logs\test.log",
                 PhysicalFileId: "file-1",
                 SegmentId: "seg-1",
                 IngestRunId: "run-1",
-                RecordIndex: i,
+                RecordIndex: actualIndex,
                 Level: "INFO",
-                Message: $"Event #{i}",
+                Message: $"Event #{actualIndex}",
                 FieldsJson: null));
         }
 

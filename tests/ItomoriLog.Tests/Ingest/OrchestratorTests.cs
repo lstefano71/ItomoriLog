@@ -593,6 +593,48 @@ public class OrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task IngestOrchestrator_ZipEntryPath_IngestsOnlySelectedEntry()
+    {
+        var dbPath = Path.Combine(_tempDir, "orch_zip_entry_test.duckdb");
+        var factory = new DuckLakeConnectionFactory(dbPath);
+        try
+        {
+            var conn = await factory.GetConnectionAsync();
+            await SchemaInitializer.EnsureSchemaAsync(conn);
+
+            var baseTime = new DateTime(2024, 3, 15, 10, 0, 0);
+            var appContent = string.Join('\n', Enumerable.Range(0, 25)
+                .Select(i => $"{baseTime.AddSeconds(i):yyyy-MM-dd HH:mm:ss.fff} INFO App msg {i}"));
+            var errorContent = string.Join('\n', Enumerable.Range(0, 25)
+                .Select(i => $"{baseTime.AddSeconds(i):yyyy-MM-dd HH:mm:ss.fff} ERROR Error msg {i}"));
+
+            var zipPath = CreateTestZip("orch_zip_entry", ("app.log", appContent), ("errors.log", errorContent));
+            var entrySourcePath = ZipHandler.EnumerateEntries(zipPath).Single(entry => entry.EntryName == "errors.log").SourcePath;
+
+            var orchestrator = new IngestOrchestrator(conn, maxConcurrency: 1);
+            var result = await orchestrator.IngestFilesAsync(
+                [entrySourcePath],
+                new TimeBasisConfig(TimeBasis.Utc));
+
+            result.Status.Should().Be("completed");
+            result.TotalRows.Should().Be(25);
+            result.FilesProcessed.Should().Be(1);
+
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT COUNT(*), MIN(source_path), MAX(source_path) FROM logs";
+            using var reader = await cmd.ExecuteReaderAsync();
+            (await reader.ReadAsync()).Should().BeTrue();
+            reader.GetInt64(0).Should().Be(25);
+            reader.GetString(1).Should().Be(entrySourcePath);
+            reader.GetString(2).Should().Be(entrySourcePath);
+        }
+        finally
+        {
+            factory.Dispose();
+        }
+    }
+
+    [Fact]
     public async Task IngestOrchestrator_UnrecognizedFile_SkipsWithReason()
     {
         var dbPath = Path.Combine(_tempDir, "orch_unrec_test.duckdb");

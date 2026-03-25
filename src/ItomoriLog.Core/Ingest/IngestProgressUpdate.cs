@@ -17,3 +17,8 @@ public sealed record IngestProgressUpdate(
     long BytesTotal,
     long RecordsProcessed,
     string? Message = null);
+
+public sealed record IngestVisibilityUpdate(
+    string SourcePath,
+    int RowsCommitted,
+    long TotalRowsCommitted);

@@ -3,6 +3,7 @@ namespace ItomoriLog.Core.Storage;
 public static class SessionPaths
 {
     public const string DefaultDbFileName = "ItomoriLog.duckdb";
+    public const string DuckLakeDataFolderName = "data";
 
     public static string DefaultSessionsRoot =>
         Path.Combine(
@@ -19,12 +20,16 @@ public static class SessionPaths
 
         Directory.CreateDirectory(fullPath);
         Directory.CreateDirectory(Path.Combine(fullPath, "exports"));
+        Directory.CreateDirectory(GetDuckLakeDataPath(fullPath));
 
         return fullPath;
     }
 
     public static string GetDbPath(string sessionFolder) =>
         Path.Combine(sessionFolder, DefaultDbFileName);
+
+    public static string GetDuckLakeDataPath(string sessionFolder) =>
+        Path.Combine(sessionFolder, DuckLakeDataFolderName);
 
     private static string SanitizeFolderName(string name)
     {

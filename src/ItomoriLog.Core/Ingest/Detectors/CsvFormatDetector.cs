@@ -7,9 +7,12 @@ public sealed class CsvFormatDetector : IFormatDetector
 {
     private const int MinSniffLines = 5;
     private const int MaxSniffLines = 512;
+    private const int MaxDialectSampleRows = 200;
+    private const int MaxHeaderSampleRows = 20;
     private const double MinParseRate = 0.95;
 
     private static readonly char[] CandidateDelimiters = [',', ';', '\t', '|'];
+    private static readonly char[] CandidateQuotes = ['"', '\''];
 
     private static readonly string[] TimestampFieldNames =
     [
@@ -49,32 +52,32 @@ public sealed class CsvFormatDetector : IFormatDetector
             return null;
 
         // Step 1: Sniff delimiter
-        var (bestDelimiter, bestConsistency, avgColumns) = SniffDelimiter(lines);
-        if (bestConsistency < MinParseRate || avgColumns < 2)
+        var (bestDelimiter, bestQuote, bestConsistency, modalColumns) = SniffDialect(lines);
+        if (bestConsistency < MinParseRate || modalColumns < 2)
             return null;
 
         // Step 2: Detect header
-        bool hasHeader = DetectHeader(lines[0], lines.Count > 1 ? lines[1] : null, bestDelimiter);
+        bool hasHeader = DetectHeader(lines, bestDelimiter, bestQuote);
 
         // Step 3: Parse column names
         string[]? columnNames = null;
         int dataStartIndex = 0;
         if (hasHeader)
         {
-            columnNames = Readers.CsvRecordReader.ParseCsvLine(lines[0], bestDelimiter);
+            columnNames = Readers.CsvRecordReader.ParseCsvLine(lines[0], bestDelimiter, bestQuote);
             dataStartIndex = 1;
         }
         else
         {
             // Generate synthetic column names
-            var firstFields = Readers.CsvRecordReader.ParseCsvLine(lines[0], bestDelimiter);
+            var firstFields = Readers.CsvRecordReader.ParseCsvLine(lines[0], bestDelimiter, bestQuote);
             columnNames = new string[firstFields.Length];
             for (int i = 0; i < firstFields.Length; i++)
                 columnNames[i] = $"Column{i}";
         }
 
         // Step 4: Identify timestamp columns
-        var tsFields = IdentifyTimestampFields(lines, dataStartIndex, bestDelimiter, columnNames);
+        var tsFields = IdentifyTimestampFields(lines, dataStartIndex, bestDelimiter, bestQuote, columnNames);
         if (tsFields.Length == 0)
             return null;
 
@@ -84,7 +87,7 @@ public sealed class CsvFormatDetector : IFormatDetector
         int dataRows = 0;
         for (int i = dataStartIndex; i < lines.Count; i++)
         {
-            var fields = Readers.CsvRecordReader.ParseCsvLine(lines[i], bestDelimiter);
+            var fields = Readers.CsvRecordReader.ParseCsvLine(lines[i], bestDelimiter, bestQuote);
             if (fields.Length != columnNames.Length) continue;
 
             dataRows++;
@@ -108,85 +111,154 @@ public sealed class CsvFormatDetector : IFormatDetector
 
         return new DetectionResult(
             Confidence: confidence,
-            Boundary: new CsvBoundary(bestDelimiter, hasHeader, columnNames),
+            Boundary: new CsvBoundary(bestDelimiter, hasHeader, columnNames, bestQuote),
             Extractor: extractor,
             Notes: $"Delimiter: '{(bestDelimiter == '\t' ? "TAB" : bestDelimiter.ToString())}', " +
+                   $"Quote: {DescribeQuote(bestQuote)}, " +
                    $"Columns: {columnNames.Length}, TsFields: [{string.Join(", ", tsFields)}], " +
                    $"ParseRate: {bestConsistency:P0}, TsRate: {tsRate:P0}");
     }
 
-    private static (char delimiter, double consistency, double avgColumns) SniffDelimiter(List<string> lines)
+    private static (char delimiter, char quote, double consistency, int modalColumns) SniffDialect(List<string> lines)
     {
         char bestDelim = ',';
+        char bestQuote = '"';
         double bestConsistency = 0;
-        double bestAvgColumns = 0;
+        int bestModalColumns = 0;
+        int bestScore = -1;
 
         foreach (var delim in CandidateDelimiters)
         {
-            var counts = new List<int>();
-            foreach (var line in lines)
+            foreach (var quote in CandidateQuotes)
             {
-                var fields = Readers.CsvRecordReader.ParseCsvLine(line, delim);
-                counts.Add(fields.Length);
-            }
-
-            if (counts.Count == 0 || counts[0] < 2) continue;
-
-            // Use the most common column count (mode)
-            int mode = counts.GroupBy(c => c).OrderByDescending(g => g.Count()).First().Key;
-            double consistency = (double)counts.Count(c => c == mode) / counts.Count;
-            double avg = counts.Average();
-
-            if (consistency > bestConsistency || (Math.Abs(consistency - bestConsistency) < 0.01 && avg > bestAvgColumns))
-            {
-                bestDelim = delim;
-                bestConsistency = consistency;
-                bestAvgColumns = avg;
+                var (score, consistency, modalColumns) = ScoreDialect(lines, delim, quote);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestDelim = delim;
+                    bestQuote = quote;
+                    bestConsistency = consistency;
+                    bestModalColumns = modalColumns;
+                }
             }
         }
 
-        return (bestDelim, bestConsistency, bestAvgColumns);
+        return (bestDelim, bestQuote, bestConsistency, bestModalColumns);
     }
 
-    private static bool DetectHeader(string firstLine, string? secondLine, char delimiter)
+    private static (int score, double consistency, int modalColumns) ScoreDialect(List<string> lines, char delimiter, char quote)
     {
-        if (secondLine is null) return false;
+        var rowCount = Math.Min(lines.Count, MaxDialectSampleRows);
+        if (rowCount == 0)
+            return (-1, 0, 0);
 
-        var headerFields = Readers.CsvRecordReader.ParseCsvLine(firstLine, delimiter);
-        var dataFields = Readers.CsvRecordReader.ParseCsvLine(secondLine, delimiter);
+        var columnCounts = new int[rowCount];
+        for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
+            columnCounts[rowIndex] = Readers.CsvRecordReader.ParseCsvLine(lines[rowIndex], delimiter, quote).Length;
 
-        if (headerFields.Length != dataFields.Length) return false;
+        var modalColumns = FindMode(columnCounts);
+        if (modalColumns <= 1)
+            return (-1, 0, modalColumns);
 
-        // Header: more alphabetic content; data: more numeric/date content
-        int headerAlpha = 0, headerNumeric = 0;
-        int dataAlpha = 0, dataNumeric = 0;
-
-        foreach (var f in headerFields)
+        var consistentRows = columnCounts.Count(count => count == modalColumns);
+        var consistency = (double)consistentRows / rowCount;
+        var consistencyScore = (int)Math.Round(consistency * 1000, MidpointRounding.AwayFromZero);
+        var structuredFieldScore = 0;
+        var maxTypedRows = Math.Min(rowCount, MaxHeaderSampleRows + 1);
+        for (var rowIndex = 0; rowIndex < maxTypedRows; rowIndex++)
         {
-            var trimmed = f.Trim();
-            if (trimmed.Length == 0) continue;
-            if (trimmed.All(c => char.IsLetter(c) || c == '_' || c == ' ' || c == '@'))
-                headerAlpha++;
-            else if (double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
-                headerNumeric++;
+            var fields = Readers.CsvRecordReader.ParseCsvLine(lines[rowIndex], delimiter, quote);
+            if (fields.Length != modalColumns)
+                continue;
+
+            structuredFieldScore += fields.Count(field => IsStructuredType(ClassifyField(field)));
         }
 
-        foreach (var f in dataFields)
-        {
-            var trimmed = f.Trim();
-            if (trimmed.Length == 0) continue;
-            if (trimmed.All(c => char.IsLetter(c) || c == '_' || c == ' '))
-                dataAlpha++;
-            else if (double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out _) ||
-                     DateTimeOffset.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
-                dataNumeric++;
-        }
-
-        // Header has significantly more alphabetic fields than data row
-        return headerAlpha > headerNumeric && (headerAlpha > dataAlpha || dataNumeric > dataAlpha);
+        var score = consistencyScore * 1_000_000 + modalColumns * 10_000 + structuredFieldScore * 10 + rowCount;
+        return (score, consistency, modalColumns);
     }
 
-    private static string[] IdentifyTimestampFields(List<string> lines, int dataStartIndex, char delimiter, string[] columnNames)
+    private static int FindMode(IReadOnlyList<int> values)
+    {
+        if (values.Count == 0)
+            return 0;
+
+        var modeGroups = values.GroupBy(value => value)
+            .OrderByDescending(group => group.Count())
+            .ThenByDescending(group => group.Key)
+            .First();
+        return modeGroups.Key;
+    }
+
+    private static bool DetectHeader(IReadOnlyList<string> lines, char delimiter, char quote)
+    {
+        if (lines.Count < 2)
+            return false;
+
+        var headerFields = Readers.CsvRecordReader.ParseCsvLine(lines[0], delimiter, quote);
+        if (headerFields.Length == 0)
+            return false;
+
+        var headerTypes = headerFields.Select(ClassifyField).ToArray();
+        if (headerTypes.All(type => type == FieldType.Empty) || headerTypes.Any(IsStructuredType))
+            return false;
+
+        var structuredHits = new int[headerFields.Length];
+        var dataRowCount = 0;
+        var maxRowIndex = Math.Min(lines.Count, MaxHeaderSampleRows + 1);
+        for (var rowIndex = 1; rowIndex < maxRowIndex; rowIndex++)
+        {
+            var rowFields = Readers.CsvRecordReader.ParseCsvLine(lines[rowIndex], delimiter, quote);
+            if (rowFields.Length != headerFields.Length)
+                continue;
+
+            dataRowCount++;
+            for (var columnIndex = 0; columnIndex < rowFields.Length; columnIndex++)
+            {
+                if (IsStructuredType(ClassifyField(rowFields[columnIndex])))
+                    structuredHits[columnIndex]++;
+            }
+        }
+
+        if (dataRowCount == 0)
+            return false;
+
+        var threshold = Math.Max(1, (dataRowCount + 1) / 2);
+        return structuredHits.Any(hitCount => hitCount >= threshold);
+    }
+
+    private static FieldType ClassifyField(string value)
+    {
+        var trimmed = value.Trim();
+        if (trimmed.Length == 0)
+            return FieldType.Empty;
+
+        if (bool.TryParse(trimmed, out _))
+            return FieldType.Boolean;
+
+        if (long.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out _) ||
+            double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+            return FieldType.Number;
+
+        if (DateTimeOffset.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out _) ||
+            DateTime.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out _))
+            return FieldType.Date;
+
+        return FieldType.Text;
+    }
+
+    private static bool IsStructuredType(FieldType type) =>
+        type is FieldType.Number or FieldType.Boolean or FieldType.Date;
+
+    private static string DescribeQuote(char quote) =>
+        quote switch
+        {
+            '"' => "double-quote",
+            '\'' => "single-quote",
+            _ => quote.ToString()
+        };
+
+    private static string[] IdentifyTimestampFields(List<string> lines, int dataStartIndex, char delimiter, char quote, string[] columnNames)
     {
         // Check for composite Date + Time columns first
         string? dateCol = null;
@@ -203,8 +275,20 @@ public sealed class CsvFormatDetector : IFormatDetector
         // If we have both date and time columns, check if they form a valid composite timestamp
         if (dateCol is not null && timeCol is not null)
         {
-            if (ValidateCompositeTimestamp(lines, dataStartIndex, delimiter, columnNames, [dateCol, timeCol]))
+            if (ValidateCompositeTimestamp(lines, dataStartIndex, delimiter, quote, columnNames, [dateCol, timeCol]))
                 return [dateCol, timeCol];
+        }
+
+        // For headerless or unfamiliar CSVs, try composite timestamp pairs before
+        // falling back to a single parseable column.
+        for (var first = 0; first < columnNames.Length; first++)
+        {
+            for (var second = first + 1; second < columnNames.Length; second++)
+            {
+                var candidateFields = new[] { columnNames[first], columnNames[second] };
+                if (ValidateCompositeTimestamp(lines, dataStartIndex, delimiter, quote, columnNames, candidateFields))
+                    return candidateFields;
+            }
         }
 
         // Look for single timestamp column by well-known names
@@ -214,21 +298,21 @@ public sealed class CsvFormatDetector : IFormatDetector
             if (colIdx < 0) continue;
 
             var actualName = columnNames[colIdx];
-            if (ValidateCompositeTimestamp(lines, dataStartIndex, delimiter, columnNames, [actualName]))
+            if (ValidateCompositeTimestamp(lines, dataStartIndex, delimiter, quote, columnNames, [actualName]))
                 return [actualName];
         }
 
         // Brute force: try each column
         for (int col = 0; col < columnNames.Length; col++)
         {
-            if (ValidateCompositeTimestamp(lines, dataStartIndex, delimiter, columnNames, [columnNames[col]]))
+            if (ValidateCompositeTimestamp(lines, dataStartIndex, delimiter, quote, columnNames, [columnNames[col]]))
                 return [columnNames[col]];
         }
 
         return [];
     }
 
-    private static bool ValidateCompositeTimestamp(List<string> lines, int dataStartIndex, char delimiter, string[] columnNames, string[] tsFields)
+    private static bool ValidateCompositeTimestamp(List<string> lines, int dataStartIndex, char delimiter, char quote, string[] columnNames, string[] tsFields)
     {
         var extractor = new CompositeCsvTsExtractor(tsFields);
         int success = 0;
@@ -237,7 +321,7 @@ public sealed class CsvFormatDetector : IFormatDetector
 
         for (int i = dataStartIndex; i < maxCheck; i++)
         {
-            var fields = Readers.CsvRecordReader.ParseCsvLine(lines[i], delimiter);
+            var fields = Readers.CsvRecordReader.ParseCsvLine(lines[i], delimiter, quote);
             if (fields.Length != columnNames.Length) continue;
 
             attempts++;
@@ -251,5 +335,14 @@ public sealed class CsvFormatDetector : IFormatDetector
         }
 
         return attempts > 0 && (double)success / attempts >= 0.8;
+    }
+
+    private enum FieldType : byte
+    {
+        Empty,
+        Text,
+        Number,
+        Boolean,
+        Date
     }
 }

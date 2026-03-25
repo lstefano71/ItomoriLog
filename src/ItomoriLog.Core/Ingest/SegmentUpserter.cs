@@ -33,26 +33,66 @@ public sealed class SegmentUpserter
 
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO segments (
-                segment_id, logical_source_id, physical_file_id,
-                min_ts_utc, max_ts_utc, row_count, last_ingest_run_id, active,
-                last_byte_offset, source_path, file_size_bytes, last_modified_utc, file_hash
+            MERGE INTO segments AS target
+            USING (
+                SELECT
+                    $1 AS segment_id,
+                    $2 AS logical_source_id,
+                    $3 AS physical_file_id,
+                    $4 AS min_ts_utc,
+                    $5 AS max_ts_utc,
+                    $6 AS row_count,
+                    $7 AS last_ingest_run_id,
+                    $8 AS active,
+                    $9 AS last_byte_offset,
+                    $10 AS source_path,
+                    $11 AS file_size_bytes,
+                    $12 AS last_modified_utc,
+                    $13 AS file_hash
+            ) AS source
+            ON target.segment_id = source.segment_id
+            WHEN MATCHED THEN UPDATE SET
+                logical_source_id = source.logical_source_id,
+                physical_file_id = source.physical_file_id,
+                min_ts_utc = source.min_ts_utc,
+                max_ts_utc = source.max_ts_utc,
+                row_count = source.row_count,
+                last_ingest_run_id = source.last_ingest_run_id,
+                active = source.active,
+                last_byte_offset = source.last_byte_offset,
+                source_path = source.source_path,
+                file_size_bytes = source.file_size_bytes,
+                last_modified_utc = source.last_modified_utc,
+                file_hash = source.file_hash
+            WHEN NOT MATCHED THEN INSERT (
+                segment_id,
+                logical_source_id,
+                physical_file_id,
+                min_ts_utc,
+                max_ts_utc,
+                row_count,
+                last_ingest_run_id,
+                active,
+                last_byte_offset,
+                source_path,
+                file_size_bytes,
+                last_modified_utc,
+                file_hash
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+                source.segment_id,
+                source.logical_source_id,
+                source.physical_file_id,
+                source.min_ts_utc,
+                source.max_ts_utc,
+                source.row_count,
+                source.last_ingest_run_id,
+                source.active,
+                source.last_byte_offset,
+                source.source_path,
+                source.file_size_bytes,
+                source.last_modified_utc,
+                source.file_hash
             )
-            ON CONFLICT (segment_id) DO UPDATE SET
-                logical_source_id  = EXCLUDED.logical_source_id,
-                physical_file_id   = EXCLUDED.physical_file_id,
-                min_ts_utc         = EXCLUDED.min_ts_utc,
-                max_ts_utc         = EXCLUDED.max_ts_utc,
-                row_count          = EXCLUDED.row_count,
-                last_ingest_run_id = EXCLUDED.last_ingest_run_id,
-                active             = EXCLUDED.active,
-                last_byte_offset   = EXCLUDED.last_byte_offset,
-                source_path        = EXCLUDED.source_path,
-                file_size_bytes    = EXCLUDED.file_size_bytes,
-                last_modified_utc  = EXCLUDED.last_modified_utc,
-                file_hash          = EXCLUDED.file_hash
             """;
 
         foreach (var row in segments)

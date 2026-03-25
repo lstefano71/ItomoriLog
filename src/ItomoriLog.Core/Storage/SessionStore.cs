@@ -20,6 +20,12 @@ public sealed class SessionStore
         var sessionId = Guid.NewGuid().ToString("N");
         var now = DateTimeOffset.UtcNow;
 
+        using (var clearCmd = conn.CreateCommand())
+        {
+            clearCmd.CommandText = "DELETE FROM session";
+            await clearCmd.ExecuteNonQueryAsync(ct);
+        }
+
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             INSERT INTO session (session_id, created_utc, modified_utc, title, description, created_by, default_timezone, app_version)
@@ -41,7 +47,12 @@ public sealed class SessionStore
         var conn = await _factory.GetConnectionAsync(ct);
 
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT session_id, created_utc, modified_utc, title, description, created_by, default_timezone, app_version FROM session LIMIT 1";
+        cmd.CommandText = """
+            SELECT session_id, created_utc, modified_utc, title, description, created_by, default_timezone, app_version
+            FROM session
+            ORDER BY modified_utc DESC, created_utc DESC
+            LIMIT 1
+            """;
 
         using var reader = await cmd.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct))

@@ -217,12 +217,12 @@ public class LogsPageViewModel : ViewModelBase
         }
     }
 
-    public async Task RefreshResultsAsync(bool invalidateCache = false)
+    public async Task RefreshResultsAsync(bool invalidateCache = false, bool preserveLoadedRowCount = false)
     {
         if (invalidateCache)
             InvalidateCache();
 
-        await RefreshAsync();
+        await RefreshAsync(preserveLoadedRowCount);
     }
 
     public async Task ResetFiltersAndRefreshAsync(bool invalidateCache = false)
@@ -285,11 +285,30 @@ public class LogsPageViewModel : ViewModelBase
         };
     }
 
-    private async Task RefreshAsync()
+    private Task RefreshAsync()
+        => RefreshAsync(preserveLoadedRowCount: false);
+
+    private async Task RefreshAsync(bool preserveLoadedRowCount)
     {
+        var targetRowCount = preserveLoadedRowCount ? CurrentPage.Count : 0;
+        var selectedRow = SelectedRow;
         _nextCursor = null;
         await RunOnMainThreadAsync(() => CurrentPageIndex = 0);
         await ExecuteQueryAsync(null, PageDirection.Forward, append: false);
+
+        if (preserveLoadedRowCount)
+        {
+            while (HasNextPage && CurrentPage.Count < targetRowCount)
+            {
+                if (_nextCursor is null)
+                    break;
+
+                await ExecuteQueryAsync(_nextCursor, PageDirection.Forward, append: true);
+                await RunOnMainThreadAsync(() => CurrentPageIndex++);
+            }
+        }
+
+        await RunOnMainThreadAsync(() => SelectedRow = FindMatchingRow(CurrentPage, selectedRow));
     }
 
     private async Task LoadMoreAsync()
@@ -437,6 +456,17 @@ public class LogsPageViewModel : ViewModelBase
         }
 
         return TimeZoneInfo.Local;
+    }
+
+    private static LogRowDto? FindMatchingRow(IEnumerable<LogRowDto> rows, LogRowDto? selectedRow)
+    {
+        if (selectedRow is null)
+            return null;
+
+        return rows.FirstOrDefault(row =>
+            row.TimestampUtc == selectedRow.TimestampUtc
+            && string.Equals(row.SegmentId, selectedRow.SegmentId, StringComparison.Ordinal)
+            && row.RecordIndex == selectedRow.RecordIndex);
     }
 
     private async Task<TickContext> GetTickContextAsync()

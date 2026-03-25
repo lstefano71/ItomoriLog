@@ -18,14 +18,18 @@ namespace ItomoriLog.UI.ViewModels;
 public class SessionShellViewModel : ViewModelBase
 {
     private static readonly TimeSpan MinStableRateWindow = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan MinLiveBrowseRefreshInterval = TimeSpan.FromSeconds(1);
 
     private readonly MainWindowViewModel _main;
     private readonly string _sessionFolder;
     private readonly DetectionEngine _detectionEngine = new();
     private readonly SemaphoreSlim _sniffConcurrency = new(4, 4);
+    private readonly SemaphoreSlim _liveBrowseRefreshGate = new(1, 1);
     private readonly HashSet<string> _activeIngestPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Dictionary<string, IngestProgressUpdate>> _archiveEntryProgress = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _liveBrowseRefreshLock = new();
 
+    private DuckLakeConnectionFactory? _sessionFactory;
     private string _title = "";
     private string _description = "";
     private string _defaultTimezone = "";
@@ -50,6 +54,9 @@ public class SessionShellViewModel : ViewModelBase
     private bool _isStagingPaneOpen = true;
     private StagedSourceItemViewModel? _selectedStagedSource;
     private bool _recoveryBannerDismissed;
+    private bool _liveBrowseRefreshQueued;
+    private bool _liveBrowseRefreshDirty;
+    private DateTimeOffset _lastLiveBrowseRefreshUtc = DateTimeOffset.MinValue;
 
     public SessionShellViewModel(MainWindowViewModel main, string sessionFolder)
     {
@@ -200,10 +207,15 @@ public class SessionShellViewModel : ViewModelBase
             : "-";
 
     public bool HasPendingDetectionReview => StagedSources.Any(s => s.RequiresDetectionReview);
+    public bool HasInvalidDetectionOverrides => StagedSources.Any(s => s.HasOverrideValidationError);
     public bool HasSniffingInProgress => StagedSources.Any(s => s.IsSniffing);
     public bool HasStagedSources => StagedSources.Count > 0;
     public bool HasRunnableStagedSources => StagedSources.Any(s => s.Phase != nameof(IngestFilePhase.Completed));
-    public bool CanStartIngestion => !IsIngesting && HasRunnableStagedSources && !HasPendingDetectionReview && !HasSniffingInProgress;
+    public bool CanStartIngestion => !IsIngesting
+        && HasRunnableStagedSources
+        && !HasPendingDetectionReview
+        && !HasInvalidDetectionOverrides
+        && !HasSniffingInProgress;
     public bool CanModifyStagedSources => !IsIngesting;
     public bool HasSelectedStagedSource => SelectedStagedSource is not null;
     public bool CanConfirmSelectedDetection => SelectedStagedSource?.RequiresDetectionReview == true && !IsIngesting;
@@ -336,26 +348,37 @@ public class SessionShellViewModel : ViewModelBase
         IProgress<ExportProgress> progress,
         CancellationToken ct)
     {
-        var dbPath = SessionPaths.GetDbPath(_sessionFolder);
-        using var factory = new DuckLakeConnectionFactory(dbPath);
-        var conn = await factory.GetConnectionAsync(ct);
+        var conn = await GetSessionConnectionAsync(ct);
         var service = new ExportService(conn);
         return await service.ExportAsync(options, progress, ct);
     }
 
-    public void ReleaseSessionLock() => _crashRecoveryService?.ReleaseLock();
+    public void ReleaseSessionLock()
+    {
+        _crashRecoveryService?.ReleaseLock();
+        _sessionFactory?.Dispose();
+        _sessionFactory = null;
+    }
 
     private async Task LoadHeaderAsync()
     {
         var dbPath = SessionPaths.GetDbPath(_sessionFolder);
-        using var bootstrapFactory = new DuckLakeConnectionFactory(dbPath);
-        var bootstrapConnection = await bootstrapFactory.GetConnectionAsync();
-        await SchemaInitializer.EnsureSchemaAsync(bootstrapConnection);
-
         _crashRecoveryService = new CrashRecoveryService(_sessionFolder);
+        SessionHeader? header;
+        long recordCount;
+        CrashRecoveryStatus recoveryStatus;
 
-        var store = new SessionStore(bootstrapFactory);
-        var header = await store.ReadHeaderAsync();
+        using (var bootstrapFactory = new DuckLakeConnectionFactory(dbPath))
+        {
+            var bootstrapConnection = await bootstrapFactory.GetConnectionAsync();
+            await SchemaInitializer.EnsureSchemaAsync(bootstrapConnection);
+
+            var store = new SessionStore(bootstrapFactory);
+            header = await store.ReadHeaderAsync();
+            recordCount = await ReadRecordCountAsync(bootstrapConnection);
+            recoveryStatus = await _crashRecoveryService.CheckAsync(bootstrapConnection);
+        }
+
         if (header is not null)
         {
             Title = header.Title;
@@ -371,9 +394,7 @@ public class SessionShellViewModel : ViewModelBase
             EditableTimezone = DefaultTimezone;
         }
 
-        RecordCount = await ReadRecordCountAsync(bootstrapConnection);
-
-        var recoveryStatus = await _crashRecoveryService.CheckAsync(bootstrapConnection);
+        RecordCount = recordCount;
         _crashRecoveryService.AcquireLock();
         CrashRecovery = !_recoveryBannerDismissed && recoveryStatus.CanResume
             ? new CrashRecoveryViewModel(
@@ -382,7 +403,7 @@ public class SessionShellViewModel : ViewModelBase
                 onDismiss: DismissRecoveryBanner)
             : new CrashRecoveryViewModel();
 
-        var logsFactory = new DuckLakeConnectionFactory(dbPath);
+        var logsFactory = GetSessionFactory();
         LogsPage = new LogsPageViewModel(logsFactory, DefaultTimezone);
         Timeline = new TimelineViewModel(logsFactory);
         FacetPanel = new FacetPanelViewModel(logsFactory);
@@ -432,9 +453,7 @@ public class SessionShellViewModel : ViewModelBase
         CrashRecovery = new CrashRecoveryViewModel();
         StatusText = BuildSessionStatus("Recovering interrupted ingest...");
 
-        var dbPath = SessionPaths.GetDbPath(_sessionFolder);
-        using var factory = new DuckLakeConnectionFactory(dbPath);
-        var conn = await factory.GetConnectionAsync();
+        var conn = await GetSessionConnectionAsync();
         await SchemaInitializer.EnsureSchemaAsync(conn);
 
         var resumablePaths = await _crashRecoveryService.RecoverInterruptedIngestionAsync(conn);
@@ -485,7 +504,7 @@ public class SessionShellViewModel : ViewModelBase
 
         var requestedPaths = filePaths
             .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Select(Path.GetFullPath)
+            .Select(SourcePathHelper.Normalize)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         if (requestedPaths.Length == 0)
@@ -505,9 +524,7 @@ public class SessionShellViewModel : ViewModelBase
 
         try
         {
-            var dbPath = SessionPaths.GetDbPath(_sessionFolder);
-            using var factory = new DuckLakeConnectionFactory(dbPath);
-            var conn = await factory.GetConnectionAsync();
+            var conn = await GetSessionConnectionAsync();
             await SchemaInitializer.EnsureSchemaAsync(conn);
 
             var defaultTz = BuildDefaultTimeBasisConfig();
@@ -515,10 +532,10 @@ public class SessionShellViewModel : ViewModelBase
             var plan = await planner.PlanAsync(requestedPaths, ExistingFileAction, CancellationToken.None);
 
             var skippedPaths = new HashSet<string>(
-                plan.SkippedFiles.Select(skip => Path.GetFullPath(skip.SourcePath)),
+                plan.SkippedFiles.Select(skip => SourcePathHelper.Normalize(skip.SourcePath)),
                 StringComparer.OrdinalIgnoreCase);
             var filesToIngest = new HashSet<string>(
-                plan.FilesToIngest.Select(Path.GetFullPath),
+                plan.FilesToIngest.Select(SourcePathHelper.Normalize),
                 StringComparer.OrdinalIgnoreCase);
             var reingestRequestedPaths = requestedPaths
                 .Where(path => !skippedPaths.Contains(path) && !filesToIngest.Contains(path))
@@ -550,13 +567,23 @@ public class SessionShellViewModel : ViewModelBase
                 }
             }
 
+            var successfulReingests = 0;
+            var reingestFailures = 0;
             foreach (var segmentId in plan.SegmentsToReingest)
             {
                 var reingest = new ReingestService(conn);
-                var reingestResult = await reingest.ReingestSegmentAsync(segmentId, defaultTz, CancellationToken.None);
+                var reingestResult = await reingest.ReingestSegmentAsync(
+                    segmentId,
+                    defaultTz,
+                    CancellationToken.None);
                 if (!reingestResult.Success)
                 {
                     StatusText = BuildSessionStatus($"Re-ingest failed for segment {segmentId}: {reingestResult.Error}");
+                    reingestFailures++;
+                }
+                else
+                {
+                    successfulReingests++;
                 }
             }
 
@@ -578,7 +605,10 @@ public class SessionShellViewModel : ViewModelBase
                 RecordCount = await ReadRecordCountAsync(conn);
                 await RefreshBrowseAsync(resetFilters: wasEmptySession, invalidateCache: true);
                 AutoHideStagingPaneIfAllCompleted();
-                StatusText = BuildSessionStatus($"Re-ingested {plan.SegmentsToReingest.Count} segment(s).");
+                var reingestOnlyDetail = reingestFailures == 0
+                    ? $"Re-ingested {successfulReingests} segment(s)."
+                    : $"Re-ingest finished with {successfulReingests} success and {reingestFailures} failure.";
+                StatusText = BuildSessionStatus(reingestOnlyDetail);
                 return;
             }
 
@@ -590,13 +620,15 @@ public class SessionShellViewModel : ViewModelBase
 
             var overrides = BuildDetectionOverrides(plan.FilesToIngest);
             var progress = new Progress<IngestProgressUpdate>(OnIngestProgress);
-            var orchestrator = new IngestOrchestrator(conn, detectionOverrides: overrides);
-            var result = await orchestrator.IngestFilesAsync(plan.FilesToIngest, defaultTz, progress);
+            var visibility = new Progress<IngestVisibilityUpdate>(OnIngestVisibilityCommitted);
+            var orchestrator = new IngestOrchestrator(conn, formatOverrides: overrides);
+            var result = await orchestrator.IngestFilesAsync(plan.FilesToIngest, defaultTz, progress, visibility);
 
             RecordCount = await ReadRecordCountAsync(conn);
 
             if (result.Status == "completed")
             {
+                using var globalStore = new GlobalStore();
                 foreach (var ingestedPath in plan.FilesToIngest)
                 {
                     if (TryFindStagedSource(ingestedPath, out var ingestedItem))
@@ -607,18 +639,26 @@ public class SessionShellViewModel : ViewModelBase
                             bytesTotal: ingestedItem.BytesTotal,
                             recordsProcessed: ingestedItem.RecordsProcessed,
                             message: "Completed");
+
+                        await PersistFeedbackRuleAsync(globalStore, ingestedItem);
                     }
                 }
+                await globalStore.AddRecentSessionAsync(_sessionFolder, Title, Description);
             }
-
-            using var globalStore = new GlobalStore();
-            await globalStore.AddRecentSessionAsync(_sessionFolder, Title, Description);
+            else
+            {
+                using var globalStore = new GlobalStore();
+                await globalStore.AddRecentSessionAsync(_sessionFolder, Title, Description);
+            }
 
             await RefreshBrowseAsync(resetFilters: wasEmptySession && result.TotalRows > 0, invalidateCache: true);
             AutoHideStagingPaneIfAllCompleted();
 
             StatusText = result.Status == "completed"
-                ? BuildSessionStatus($"{result.FilesProcessed} file(s) ingested, {plan.SegmentsToReingest.Count} segment(s) re-ingested, {result.TotalRows:N0} rows added.")
+                ? BuildSessionStatus(
+                    reingestFailures == 0
+                        ? $"{result.FilesProcessed} file(s) ingested, {successfulReingests} segment(s) re-ingested, {result.TotalRows:N0} rows added."
+                        : $"{result.FilesProcessed} file(s) ingested, {successfulReingests} segment(s) re-ingested, {reingestFailures} failed, {result.TotalRows:N0} rows added.")
                 : BuildSessionStatus("Ingest failed.");
         }
         catch (Exception ex)
@@ -627,6 +667,11 @@ public class SessionShellViewModel : ViewModelBase
         }
         finally
         {
+            lock (_liveBrowseRefreshLock)
+            {
+                _liveBrowseRefreshQueued = false;
+                _liveBrowseRefreshDirty = false;
+            }
             _activeIngestPaths.Clear();
             IsIngesting = false;
             RaiseStagingStateProperties();
@@ -634,23 +679,23 @@ public class SessionShellViewModel : ViewModelBase
         }
     }
 
-    private Dictionary<string, DetectionResult> BuildDetectionOverrides(IReadOnlyList<string> filePaths)
+    private Dictionary<string, FileFormatOverride> BuildDetectionOverrides(IReadOnlyList<string> filePaths)
     {
-        var result = new Dictionary<string, DetectionResult>(StringComparer.OrdinalIgnoreCase);
+        var result = new Dictionary<string, FileFormatOverride>(StringComparer.OrdinalIgnoreCase);
         var byPath = StagedSources
-            .Where(s => !s.IsDirectory && !s.SourcePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            .Where(s => !s.IsDirectory)
             .ToDictionary(
-                s => Path.GetFullPath(s.SourcePath),
+                s => SourcePathHelper.Normalize(s.SourcePath),
                 s => s,
                 StringComparer.OrdinalIgnoreCase);
 
         foreach (var filePath in filePaths)
         {
-            var canonical = Path.GetFullPath(filePath);
+            var canonical = SourcePathHelper.Normalize(filePath);
             if (byPath.TryGetValue(canonical, out var item)
-                && item.TryGetSelectedDetection(out var detection))
+                && item.TryBuildSelectedOverride(out var formatOverride))
             {
-                result[canonical] = detection;
+                result[canonical] = formatOverride;
             }
         }
 
@@ -678,9 +723,7 @@ public class SessionShellViewModel : ViewModelBase
 
         try
         {
-            var dbPath = SessionPaths.GetDbPath(_sessionFolder);
-            using var factory = new DuckLakeConnectionFactory(dbPath);
-            var conn = await factory.GetConnectionAsync();
+            var conn = await GetSessionConnectionAsync();
             await SchemaInitializer.EnsureSchemaAsync(conn);
 
             var segmentIds = await ResolveSegmentsForSourceAsync(conn, item.SourcePath);
@@ -698,8 +741,8 @@ public class SessionShellViewModel : ViewModelBase
 
             var defaultTz = BuildDefaultTimeBasisConfig();
             var service = new ReingestService(conn);
-            var overrideDetection = item.TryGetSelectedDetection(out var selectedDetection)
-                ? selectedDetection
+            var formatOverride = item.TryBuildSelectedOverride(out var selectedOverride)
+                ? selectedOverride
                 : null;
             var ok = 0;
             var failed = 0;
@@ -711,7 +754,7 @@ public class SessionShellViewModel : ViewModelBase
                     segmentId,
                     defaultTz,
                     CancellationToken.None,
-                    overrideDetection: overrideDetection);
+                    formatOverride: formatOverride);
                 if (result.Success)
                 {
                     ok++;
@@ -734,6 +777,12 @@ public class SessionShellViewModel : ViewModelBase
                 recordsProcessed: replacedRows,
                 message: failed == 0 ? "Re-ingested." : "Re-ingest completed with failures.");
 
+            if (failed == 0)
+            {
+                using var globalStore = new GlobalStore();
+                await PersistFeedbackRuleAsync(globalStore, item);
+            }
+
             StatusText = failed == 0
                 ? BuildSessionStatus($"Re-ingested {ok} segment(s), refreshing {replacedRows:N0} rows.")
                 : BuildSessionStatus($"Re-ingest finished with {ok} success and {failed} failure.");
@@ -754,7 +803,7 @@ public class SessionShellViewModel : ViewModelBase
 
     private static async Task<List<string>> ResolveSegmentsForSourceAsync(DuckDBConnection conn, string sourcePath)
     {
-        var canonical = Path.GetFullPath(sourcePath);
+        var canonical = SourcePathHelper.Normalize(sourcePath);
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT segment_id
@@ -811,19 +860,43 @@ public class SessionShellViewModel : ViewModelBase
 
     private async Task RunSniffAsync(StagedSourceItemViewModel item)
     {
-        var sourcePath = item.SourcePath;
-        if (!File.Exists(sourcePath))
-        {
-            RunOnUi(() => item.MarkDetectionFailed("File not found."));
-            return;
-        }
+        var sourcePath = SourcePathHelper.Normalize(item.SourcePath);
 
         try
         {
-            var isArchive = sourcePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
-            var ranked = isArchive
-                ? await BuildArchivePreviewChoicesAsync(sourcePath)
-                : await BuildRankedDetectionChoicesAsync(File.OpenRead(sourcePath), Path.GetFileName(sourcePath));
+            List<DetectionChoiceViewModel> ranked;
+            var isArchive = false;
+            if (SourcePathHelper.TrySplitArchiveEntry(sourcePath, out var archivePath, out var entryFullName))
+            {
+                if (!File.Exists(archivePath))
+                {
+                    RunOnUi(() => item.MarkDetectionFailed("Archive file not found."));
+                    return;
+                }
+
+                await using var entryStream = ZipHandler.ExtractToMemory(archivePath, entryFullName);
+                ranked = await BuildRankedDetectionChoicesAsync(entryStream, Path.GetFileName(entryFullName));
+            }
+            else
+            {
+                if (!File.Exists(sourcePath))
+                {
+                    RunOnUi(() => item.MarkDetectionFailed("File not found."));
+                    return;
+                }
+
+                isArchive = SourcePathHelper.IsArchiveFilePath(sourcePath);
+                ranked = isArchive
+                    ? await BuildArchivePreviewChoicesAsync(sourcePath)
+                    : await BuildRankedDetectionChoicesAsync(File.OpenRead(sourcePath), Path.GetFileName(sourcePath));
+            }
+
+            using var globalStore = new GlobalStore();
+            var templateKey = FeedbackTemplateKeyBuilder.BuildKey(sourcePath);
+            var feedbackRules = await globalStore.GetFeedbackRulesAsync(sourcePath, "detection");
+            var feedbackSuggestions = feedbackRules
+                .Select(BuildFeedbackSuggestion)
+                .ToArray();
 
             if (ranked.Count == 0)
             {
@@ -842,6 +915,8 @@ public class SessionShellViewModel : ViewModelBase
                 : needsReview
                     ? $"Low confidence guess ({top.ConfidenceDisplay}) for {top.FormatName}. Review before ingesting."
                     : $"Detected {top.FormatName} ({top.ConfidenceDisplay}).";
+            if (feedbackSuggestions.Length > 0)
+                statusMessage = $"{statusMessage} {feedbackSuggestions.Length} learned suggestion{(feedbackSuggestions.Length == 1 ? string.Empty : "s")} available.";
 
             RunOnUi(() =>
             {
@@ -849,6 +924,7 @@ public class SessionShellViewModel : ViewModelBase
                     ranked,
                     needsReview,
                     statusMessage);
+                item.ApplyFeedbackSuggestions(templateKey, feedbackSuggestions);
 
                 if (item.RequiresDetectionReview)
                 {
@@ -872,10 +948,11 @@ public class SessionShellViewModel : ViewModelBase
         var sniffBuffer = new byte[(int)Math.Min(stream.Length, 128 * 1024)];
         var bytesRead = await stream.ReadAsync(sniffBuffer.AsMemory(0, sniffBuffer.Length));
         using var sniff = new MemoryStream(sniffBuffer, 0, bytesRead, writable: false);
+        var sampleLines = CsvPreviewHelper.ReadNonEmptyLines(sniffBuffer, bytesRead, encoding, 32);
 
         var candidates = _detectionEngine.DetectCandidates(sniff, sourceName);
         return candidates
-            .Select(candidate => BuildDetectionChoice(candidate, encoding, sniffBuffer, bytesRead))
+            .Select(candidate => BuildDetectionChoice(candidate, encoding, sampleLines))
             .OrderByDescending(choice => choice.Confidence)
             .ToList();
     }
@@ -916,18 +993,20 @@ public class SessionShellViewModel : ViewModelBase
             Confidence: choice.Confidence,
             Detection: choice.Detection,
             Details: details,
-            Notes: choice.Notes);
+            Notes: choice.Notes,
+            EncodingCodePage: choice.EncodingCodePage,
+            EncodingDisplay: choice.EncodingDisplay,
+            SampleLines: choice.SampleLines);
     }
 
     private DetectionChoiceViewModel BuildDetectionChoice(
         DetectionResult detection,
         Encoding encoding,
-        byte[] sniffBuffer,
-        int bytesRead)
+        IReadOnlyList<string> sampleLines)
     {
         var formatName = FormatBoundaryName(detection.Boundary);
         var shortLabel = BuildShortLabel(detection);
-        var sample = TryReadSampleTimestamp(detection, sniffBuffer, bytesRead, encoding);
+        var sample = TryReadSampleTimestamp(detection, sampleLines);
         var details = BuildDetectionDetails(detection, encoding, sample);
         var summary = BuildDetectionSummary(formatName, shortLabel, encoding, sample);
 
@@ -938,7 +1017,10 @@ public class SessionShellViewModel : ViewModelBase
             Confidence: detection.Confidence,
             Detection: detection,
             Details: details,
-            Notes: detection.Notes);
+            Notes: detection.Notes,
+            EncodingCodePage: encoding.CodePage,
+            EncodingDisplay: EncodingDetector.Describe(encoding),
+            SampleLines: sampleLines);
     }
 
     private IReadOnlyList<DetectionDetailViewModel> BuildDetectionDetails(
@@ -1010,14 +1092,12 @@ public class SessionShellViewModel : ViewModelBase
 
     private SampleTimestampInfo? TryReadSampleTimestamp(
         DetectionResult detection,
-        byte[] sniffBuffer,
-        int bytesRead,
-        Encoding encoding)
+        IReadOnlyList<string> sampleLines)
     {
         if (detection.Extractor is not ITimestampExtractorWithMetadata extractorWithMetadata)
             return null;
 
-        var raw = TryBuildSampleRecord(detection, sniffBuffer, bytesRead, encoding);
+        var raw = TryBuildSampleRecord(detection, sampleLines);
         if (raw is null)
             return null;
 
@@ -1033,20 +1113,8 @@ public class SessionShellViewModel : ViewModelBase
 
     private static RawRecord? TryBuildSampleRecord(
         DetectionResult detection,
-        byte[] sniffBuffer,
-        int bytesRead,
-        Encoding encoding)
+        IReadOnlyList<string> lines)
     {
-        using var stream = new MemoryStream(sniffBuffer, 0, bytesRead, writable: false);
-        using var reader = new StreamReader(stream, encoding, detectEncodingFromByteOrderMarks: true, leaveOpen: false);
-
-        var lines = new List<string>();
-        while (reader.ReadLine() is { } line && lines.Count < 32)
-        {
-            if (!string.IsNullOrWhiteSpace(line))
-                lines.Add(line);
-        }
-
         if (lines.Count == 0)
             return null;
 
@@ -1107,71 +1175,17 @@ public class SessionShellViewModel : ViewModelBase
         var dataLine = lines[dataIndex];
         var columnNames = csv.ColumnNames;
         if ((columnNames is null || columnNames.Length == 0) && csv.HasHeader && lines.Count > 0)
-            columnNames = SplitPreviewCsvLine(lines[0], csv.Delimiter);
+            columnNames = CsvPreviewHelper.SplitLine(lines[0], csv.Delimiter, csv.Quote);
 
         if (columnNames is null || columnNames.Length == 0)
             return new RawRecord(dataLine, dataLine, dataIndex + 1, 0);
 
-        var values = SplitPreviewCsvLine(dataLine, csv.Delimiter);
+        var values = CsvPreviewHelper.SplitLine(dataLine, csv.Delimiter, csv.Quote);
         var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < columnNames.Length && i < values.Length; i++)
             fields[columnNames[i]] = values[i];
 
         return new RawRecord(dataLine, dataLine, dataIndex + 1, 0, fields);
-    }
-
-    private static string[] SplitPreviewCsvLine(string line, char delimiter)
-    {
-        var fields = new List<string>();
-        var sb = new StringBuilder();
-        var inQuotes = false;
-        var i = 0;
-
-        while (i < line.Length)
-        {
-            var c = line[i];
-            if (inQuotes)
-            {
-                if (c == '"')
-                {
-                    if (i + 1 < line.Length && line[i + 1] == '"')
-                    {
-                        sb.Append('"');
-                        i += 2;
-                        continue;
-                    }
-
-                    inQuotes = false;
-                    i++;
-                    continue;
-                }
-
-                sb.Append(c);
-                i++;
-                continue;
-            }
-
-            if (c == '"')
-            {
-                inQuotes = true;
-                i++;
-                continue;
-            }
-
-            if (c == delimiter)
-            {
-                fields.Add(sb.ToString());
-                sb.Clear();
-                i++;
-                continue;
-            }
-
-            sb.Append(c);
-            i++;
-        }
-
-        fields.Add(sb.ToString());
-        return [.. fields];
     }
 
     private string BuildShortLabel(DetectionResult detection) =>
@@ -1265,6 +1279,7 @@ public class SessionShellViewModel : ViewModelBase
     private void RaiseStagingStateProperties()
     {
         this.RaisePropertyChanged(nameof(HasPendingDetectionReview));
+        this.RaisePropertyChanged(nameof(HasInvalidDetectionOverrides));
         this.RaisePropertyChanged(nameof(HasSniffingInProgress));
         this.RaisePropertyChanged(nameof(HasStagedSources));
         this.RaisePropertyChanged(nameof(HasRunnableStagedSources));
@@ -1316,6 +1331,7 @@ public class SessionShellViewModel : ViewModelBase
     private void OnStagedSourcePropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(StagedSourceItemViewModel.RequiresDetectionReview)
+            or nameof(StagedSourceItemViewModel.HasOverrideValidationError)
             or nameof(StagedSourceItemViewModel.IsSniffing)
             or nameof(StagedSourceItemViewModel.SelectedDetectionChoice)
             or nameof(StagedSourceItemViewModel.Phase))
@@ -1341,7 +1357,7 @@ public class SessionShellViewModel : ViewModelBase
         foreach (var fullPath in expandedPaths)
         {
             var existing = StagedSources.FirstOrDefault(item =>
-                string.Equals(Path.GetFullPath(item.SourcePath), fullPath, StringComparison.OrdinalIgnoreCase));
+                string.Equals(SourcePathHelper.Normalize(item.SourcePath), fullPath, StringComparison.OrdinalIgnoreCase));
             if (existing is not null)
             {
                 stagedItems.Add(existing);
@@ -1407,11 +1423,39 @@ public class SessionShellViewModel : ViewModelBase
 
         foreach (var rawPath in inputPaths.Where(path => !string.IsNullOrWhiteSpace(path)))
         {
+            if (SourcePathHelper.TrySplitArchiveEntry(rawPath, out var archivePath, out var entryFullName))
+            {
+                var entryPath = SourcePathHelper.CombineArchiveEntryPath(archivePath, entryFullName);
+                if (seen.Add(entryPath))
+                    yield return entryPath;
+                continue;
+            }
+
             var fullPath = Path.GetFullPath(rawPath);
             if (File.Exists(fullPath))
             {
-                if (seen.Add(fullPath))
+                if (SourcePathHelper.IsArchiveFilePath(fullPath))
+                {
+                    IEnumerable<ZipFileEntry> entries;
+                    try
+                    {
+                        entries = ZipHandler.EnumerateEntries(fullPath).ToArray();
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    foreach (var entry in entries)
+                    {
+                        if (seen.Add(entry.SourcePath))
+                            yield return entry.SourcePath;
+                    }
+                }
+                else if (seen.Add(fullPath))
+                {
                     yield return fullPath;
+                }
                 continue;
             }
 
@@ -1430,6 +1474,27 @@ public class SessionShellViewModel : ViewModelBase
                 foreach (var file in files)
                 {
                     var expanded = Path.GetFullPath(file);
+                    if (SourcePathHelper.IsArchiveFilePath(expanded))
+                    {
+                        IEnumerable<ZipFileEntry> entries;
+                        try
+                        {
+                            entries = ZipHandler.EnumerateEntries(expanded).ToArray();
+                        }
+                        catch
+                        {
+                            continue;
+                        }
+
+                        foreach (var entry in entries)
+                        {
+                            if (seen.Add(entry.SourcePath))
+                                yield return entry.SourcePath;
+                        }
+
+                        continue;
+                    }
+
                     if (seen.Add(expanded))
                         yield return expanded;
                 }
@@ -1524,9 +1589,7 @@ public class SessionShellViewModel : ViewModelBase
             return;
         }
 
-        var dbPath = SessionPaths.GetDbPath(_sessionFolder);
-        using var factory = new DuckLakeConnectionFactory(dbPath);
-        var store = new SessionStore(factory);
+        var store = new SessionStore(GetSessionFactory());
         await store.UpdateHeaderAsync(title: title, description: description, defaultTimezone: timezone);
 
         Title = title;
@@ -1547,16 +1610,16 @@ public class SessionShellViewModel : ViewModelBase
 
     private void OnIngestProgress(IngestProgressUpdate update)
     {
-        var sourcePath = Path.GetFullPath(update.SourcePath);
-        var bangIndex = sourcePath.IndexOf('!');
-        var archivePath = bangIndex > 0 ? sourcePath[..bangIndex] : sourcePath;
+        var sourcePath = SourcePathHelper.Normalize(update.SourcePath);
+        var isArchiveEntry = SourcePathHelper.TrySplitArchiveEntry(sourcePath, out var archivePath, out _);
+        archivePath ??= sourcePath;
 
         var item = StagedSources.FirstOrDefault(staged =>
-            string.Equals(Path.GetFullPath(staged.SourcePath), sourcePath, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(Path.GetFullPath(staged.SourcePath), archivePath, StringComparison.OrdinalIgnoreCase));
+            string.Equals(SourcePathHelper.Normalize(staged.SourcePath), sourcePath, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(SourcePathHelper.Normalize(staged.SourcePath), archivePath, StringComparison.OrdinalIgnoreCase));
         if (item is not null)
         {
-            if (bangIndex > 0 && string.Equals(Path.GetFullPath(item.SourcePath), archivePath, StringComparison.OrdinalIgnoreCase))
+            if (isArchiveEntry && string.Equals(SourcePathHelper.Normalize(item.SourcePath), archivePath, StringComparison.OrdinalIgnoreCase))
             {
                 if (!_archiveEntryProgress.TryGetValue(archivePath, out var entryUpdates))
                 {
@@ -1587,12 +1650,20 @@ public class SessionShellViewModel : ViewModelBase
         RecalculateOverallProgress();
     }
 
+    private void OnIngestVisibilityCommitted(IngestVisibilityUpdate update)
+    {
+        if (!IsIngesting || update.RowsCommitted <= 0)
+            return;
+
+        RequestLiveBrowseRefresh();
+    }
+
     private void ResetPerItemProgress(IReadOnlyList<string> filePaths)
     {
-        var canonicalPaths = new HashSet<string>(filePaths.Select(Path.GetFullPath), StringComparer.OrdinalIgnoreCase);
-        foreach (var item in StagedSources.Where(item => canonicalPaths.Contains(Path.GetFullPath(item.SourcePath))))
+        var canonicalPaths = new HashSet<string>(filePaths.Select(SourcePathHelper.Normalize), StringComparer.OrdinalIgnoreCase);
+        foreach (var item in StagedSources.Where(item => canonicalPaths.Contains(SourcePathHelper.Normalize(item.SourcePath))))
         {
-            _archiveEntryProgress.Remove(Path.GetFullPath(item.SourcePath));
+            _archiveEntryProgress.Remove(SourcePathHelper.Normalize(item.SourcePath));
             item.ApplyProgress(
                 phase: nameof(IngestFilePhase.Queued),
                 bytesProcessed: 0,
@@ -1608,7 +1679,7 @@ public class SessionShellViewModel : ViewModelBase
             return;
 
         var activeItems = StagedSources
-            .Where(item => _activeIngestPaths.Contains(Path.GetFullPath(item.SourcePath)))
+            .Where(item => _activeIngestPaths.Contains(SourcePathHelper.Normalize(item.SourcePath)))
             .ToArray();
         if (activeItems.Length == 0)
             return;
@@ -1669,9 +1740,18 @@ public class SessionShellViewModel : ViewModelBase
             return;
 
         if (resetFilters)
+        {
             Timeline.ClearSelection();
-
-        await Timeline.LoadCoarseBinsAsync();
+            await Timeline.LoadCoarseBinsAsync();
+        }
+        else
+        {
+            await Timeline.RefreshDataAsync(preserveViewport: true);
+            LogsPage.StartUtc = Timeline.SelectedStart;
+            LogsPage.EndUtc = Timeline.SelectedEnd;
+            FacetPanel.FilterStart = Timeline.SelectedStart;
+            FacetPanel.FilterEnd = Timeline.SelectedEnd;
+        }
 
         FacetPanel.InvalidateCache();
         if (resetFilters)
@@ -1682,8 +1762,86 @@ public class SessionShellViewModel : ViewModelBase
         if (resetFilters)
             await LogsPage.ResetFiltersAndRefreshAsync(invalidateCache);
         else
-            await LogsPage.RefreshResultsAsync(invalidateCache);
+            await LogsPage.RefreshResultsAsync(invalidateCache, preserveLoadedRowCount: true);
     }
+
+    private void RequestLiveBrowseRefresh()
+    {
+        lock (_liveBrowseRefreshLock)
+        {
+            if (_liveBrowseRefreshQueued)
+            {
+                _liveBrowseRefreshDirty = true;
+                return;
+            }
+
+            _liveBrowseRefreshQueued = true;
+            _liveBrowseRefreshDirty = false;
+        }
+
+        _ = Task.Run(ProcessPendingLiveBrowseRefreshesAsync);
+    }
+
+    private async Task ProcessPendingLiveBrowseRefreshesAsync()
+    {
+        while (true)
+        {
+            var delay = TimeSpan.Zero;
+            lock (_liveBrowseRefreshLock)
+            {
+                var elapsed = DateTimeOffset.UtcNow - _lastLiveBrowseRefreshUtc;
+                if (_lastLiveBrowseRefreshUtc != DateTimeOffset.MinValue
+                    && elapsed < MinLiveBrowseRefreshInterval)
+                {
+                    delay = MinLiveBrowseRefreshInterval - elapsed;
+                }
+            }
+
+            if (delay > TimeSpan.Zero)
+                await Task.Delay(delay);
+
+            await _liveBrowseRefreshGate.WaitAsync();
+            try
+            {
+                _lastLiveBrowseRefreshUtc = DateTimeOffset.UtcNow;
+                await RefreshBrowseDuringIngestAsync();
+            }
+            catch (Exception ex)
+            {
+                RunOnUi(() => StatusText = BuildSessionStatus($"Browse refresh failed during ingest: {ex.Message}"));
+            }
+            finally
+            {
+                _liveBrowseRefreshGate.Release();
+            }
+
+            lock (_liveBrowseRefreshLock)
+            {
+                if (!_liveBrowseRefreshDirty || !IsIngesting)
+                {
+                    _liveBrowseRefreshQueued = false;
+                    _liveBrowseRefreshDirty = false;
+                    return;
+                }
+
+                _liveBrowseRefreshDirty = false;
+            }
+        }
+    }
+
+    private async Task RefreshBrowseDuringIngestAsync()
+    {
+        await RefreshBrowseAsync(resetFilters: false, invalidateCache: true);
+    }
+
+    private DuckLakeConnectionFactory GetSessionFactory()
+    {
+        _sessionFactory ??= new DuckLakeConnectionFactory(SessionPaths.GetDbPath(_sessionFolder));
+        return _sessionFactory;
+    }
+
+    private async Task<DuckDBConnection> GetSessionConnectionAsync(CancellationToken ct = default)
+        => await GetSessionFactory().GetConnectionAsync(ct);
 
     private void AutoHideStagingPaneIfAllCompleted()
     {
@@ -1724,10 +1882,72 @@ public class SessionShellViewModel : ViewModelBase
 
     private bool TryFindStagedSource(string sourcePath, out StagedSourceItemViewModel item)
     {
-        var canonical = Path.GetFullPath(sourcePath);
+        var canonical = SourcePathHelper.Normalize(sourcePath);
         item = StagedSources.FirstOrDefault(staged =>
-            string.Equals(Path.GetFullPath(staged.SourcePath), canonical, StringComparison.OrdinalIgnoreCase))!;
+            string.Equals(SourcePathHelper.Normalize(staged.SourcePath), canonical, StringComparison.OrdinalIgnoreCase))!;
         return item is not null;
+    }
+
+    private static async Task PersistFeedbackRuleAsync(GlobalStore globalStore, StagedSourceItemViewModel item)
+    {
+        if (!item.ShouldPersistFeedbackRule || !item.TryBuildSelectedOverride(out var formatOverride))
+            return;
+
+        var candidate = BuildFeedbackRuleCandidate(item, formatOverride);
+        await globalStore.AddOrUpdateFeedbackRuleAsync(candidate);
+    }
+
+    private static FeedbackRuleCandidate BuildFeedbackRuleCandidate(StagedSourceItemViewModel item, FileFormatOverride formatOverride)
+    {
+        var templateKey = FeedbackTemplateKeyBuilder.BuildKey(item.SourcePath);
+        var sourceName = FeedbackTemplateKeyBuilder.GetSourceName(item.SourcePath);
+        var timeBasis = formatOverride.TimeBasisOverride;
+        var csvBoundary = formatOverride.Detection.Boundary as CsvBoundary;
+
+        return new FeedbackRuleCandidate(
+            RuleType: "detection",
+            TemplateKey: templateKey,
+            Config: new FeedbackRuleConfig(
+                SourceName: sourceName,
+                FormatKind: FormatBoundaryName(formatOverride.Detection.Boundary),
+                Summary: item.DetectionSummary,
+                EncodingCodePage: formatOverride.EncodingOverride?.CodePage,
+                TimeBasis: timeBasis?.Basis.ToString(),
+                OffsetMinutes: timeBasis?.OffsetMinutes,
+                TimeZoneId: timeBasis?.TimeZoneId,
+                TimestampExpression: formatOverride.Detection.Extractor.Description,
+                CsvDelimiter: csvBoundary?.Delimiter.ToString(),
+                CsvHasHeader: csvBoundary?.HasHeader),
+            Confidence: 1.0,
+            Source: "user");
+    }
+
+    private static FeedbackSuggestionViewModel BuildFeedbackSuggestion(FeedbackRuleEntry rule)
+    {
+        var details = new List<string>
+        {
+            $"template {rule.TemplateKey}"
+        };
+
+        if (!string.IsNullOrWhiteSpace(rule.Config.TimestampExpression))
+            details.Add(rule.Config.TimestampExpression!);
+
+        if (!string.IsNullOrWhiteSpace(rule.Config.TimeBasis))
+            details.Add(rule.Config.TimeBasis!);
+
+        if (rule.Config.OffsetMinutes.HasValue)
+            details.Add($"UTC{FormatOffset(rule.Config.OffsetMinutes.Value)}");
+        else if (!string.IsNullOrWhiteSpace(rule.Config.TimeZoneId))
+            details.Add(rule.Config.TimeZoneId!);
+
+        if (!string.IsNullOrWhiteSpace(rule.Config.CsvDelimiter))
+            details.Add($"delimiter {rule.Config.CsvDelimiter}");
+
+        return new FeedbackSuggestionViewModel(
+            Summary: rule.Config.Summary,
+            Detail: string.Join(" · ", details),
+            Confidence: rule.Confidence,
+            UseCount: rule.UseCount);
     }
 
     private string BuildSessionStatus(string detail) =>

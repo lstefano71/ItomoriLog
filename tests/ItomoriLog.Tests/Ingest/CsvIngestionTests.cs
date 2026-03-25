@@ -70,6 +70,38 @@ public class CsvIngestionTests
     }
 
     [Fact]
+    public void Probe_SingleQuotedSemicolonDelimited_DetectsQuoteAndReadsRows()
+    {
+        var csv = """
+            'Timestamp';'Level';'Message'
+            '2024-03-15 10:00:00';'INFO';'It''s, alive'
+            '2024-03-15 10:00:01';'DEBUG';'Loading, config'
+            '2024-03-15 10:00:02';'WARN';'Config, issue'
+            '2024-03-15 10:00:03';'INFO';'Using, defaults'
+            '2024-03-15 10:00:04';'INFO';'App, started'
+            '2024-03-15 10:00:05';'ERROR';'Connection, failed'
+            """;
+
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(csv));
+        var detector = new CsvFormatDetector();
+        var result = detector.Probe(stream, "single-quoted.csv");
+
+        result.Should().NotBeNull();
+        var boundary = (CsvBoundary)result!.Boundary;
+        boundary.Delimiter.Should().Be(';');
+        boundary.Quote.Should().Be('\'');
+        boundary.HasHeader.Should().BeTrue();
+        boundary.ColumnNames.Should().Contain("Timestamp");
+        boundary.ColumnNames.Should().Contain("Level");
+        boundary.ColumnNames.Should().Contain("Message");
+
+        using var reader = new CsvRecordReader(new StringReader(csv), boundary);
+        reader.TryReadNext(out var first).Should().BeTrue();
+        first.Fields.Should().NotBeNull();
+        first.Fields!["Message"].Should().Be("It's, alive");
+    }
+
+    [Fact]
     public void Probe_TabDelimited_DetectsDelimiter()
     {
         var lines = new List<string> { "Timestamp\tLevel\tMessage" };
@@ -84,6 +116,31 @@ public class CsvIngestionTests
         result.Should().NotBeNull();
         var boundary = (CsvBoundary)result!.Boundary;
         boundary.Delimiter.Should().Be('\t');
+    }
+
+    [Fact]
+    public void Probe_HeaderWithSymbolsAndDigits_DetectsHeader()
+    {
+        var csv = """
+            @timestamp,level-name,message_2
+            2024-03-15 10:00:00,INFO,Starting application
+            2024-03-15 10:00:01,DEBUG,Loading config
+            2024-03-15 10:00:02,WARN,Config missing
+            2024-03-15 10:00:03,INFO,Using defaults
+            2024-03-15 10:00:04,INFO,App started
+            2024-03-15 10:00:05,ERROR,Connection failed
+            """;
+
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(csv));
+        var detector = new CsvFormatDetector();
+        var result = detector.Probe(stream, "header-symbols.csv");
+
+        result.Should().NotBeNull();
+        var boundary = (CsvBoundary)result!.Boundary;
+        boundary.HasHeader.Should().BeTrue();
+        boundary.ColumnNames.Should().Contain("@timestamp");
+        boundary.ColumnNames.Should().Contain("level-name");
+        boundary.ColumnNames.Should().Contain("message_2");
     }
 
     [Fact]
@@ -183,6 +240,47 @@ public class CsvIngestionTests
         ts.Hour.Should().Be(10);
         ts.Minute.Should().Be(30);
         ts.Second.Should().Be(45);
+    }
+
+    [Fact]
+    public void Probe_HeaderlessDateAndTimeColumns_PrefersCompositeTimestamp()
+    {
+        var csv = """
+            2023-02-28,13:43:56.961Z,FILE9,INIT
+            2023-02-28,13:46:13.116Z,FILE9,PING
+            2023-02-28,13:49:10.133Z,FILE9,PING
+            2023-02-28,13:51:31.073Z,FILE9,INIT
+            2023-02-28,13:53:52.251Z,FILE9,PING
+            2023-02-28,13:56:49.303Z,FILE9,PING
+            2023-02-28,13:59:46.325Z,FILE9,PING
+            2023-02-28,14:02:43.398Z,FILE9,PING
+            2023-02-28,14:05:40.434Z,FILE9,PING
+            2023-02-28,14:08:37.483Z,FILE9,PING
+            """;
+
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(csv));
+        var detector = new CsvFormatDetector();
+        var result = detector.Probe(stream, "split-ts.csv");
+
+        result.Should().NotBeNull();
+        result!.Boundary.Should().BeOfType<CsvBoundary>();
+        var boundary = (CsvBoundary)result.Boundary;
+        boundary.HasHeader.Should().BeFalse();
+        result!.Extractor.Should().BeOfType<CompositeCsvTsExtractor>();
+        result.Extractor.Description.Should().Contain("Column0");
+        result.Extractor.Description.Should().Contain("Column1");
+
+        var fields = new Dictionary<string, string>
+        {
+            ["Column0"] = "2023-02-28",
+            ["Column1"] = "13:43:56.961Z",
+            ["Column2"] = "FILE9",
+            ["Column3"] = "INIT"
+        };
+
+        var raw = new RawRecord("", "", 0, 0, fields);
+        result.Extractor.TryExtract(raw, out var timestamp).Should().BeTrue();
+        timestamp.UtcDateTime.Should().Be(new DateTime(2023, 2, 28, 13, 43, 56, 961, DateTimeKind.Utc));
     }
 
     [Fact]

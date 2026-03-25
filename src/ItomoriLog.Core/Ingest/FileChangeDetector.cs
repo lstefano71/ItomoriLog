@@ -30,10 +30,45 @@ public sealed class FileChangeDetector
         if (meta.SourcePath is null)
             return new FileChangeResult(segmentId, FileChangeStatus.New, "No source path stored for segment");
 
-        if (!File.Exists(meta.SourcePath))
-            return new FileChangeResult(segmentId, FileChangeStatus.Deleted, $"File not found: {meta.SourcePath}");
+        var canonicalSourcePath = SourcePathHelper.Normalize(meta.SourcePath);
+        if (SourcePathHelper.TrySplitArchiveEntry(canonicalSourcePath, out var archivePath, out var entryFullName))
+        {
+            if (!File.Exists(archivePath))
+                return new FileChangeResult(segmentId, FileChangeStatus.Deleted, $"Archive not found: {archivePath}");
 
-        var fileInfo = new FileInfo(meta.SourcePath);
+            if (!ZipHandler.TryGetEntry(archivePath, entryFullName, out var zipEntry))
+                return new FileChangeResult(segmentId, FileChangeStatus.Deleted, $"Archive entry not found: {entryFullName}");
+
+            if (meta.FileSizeBytes.HasValue && zipEntry.CompressedLength != meta.FileSizeBytes.Value)
+                return new FileChangeResult(segmentId, FileChangeStatus.Modified,
+                    $"Size changed: {meta.FileSizeBytes.Value} → {zipEntry.CompressedLength}");
+
+            var archiveInfo = new FileInfo(archivePath);
+            if (meta.LastModifiedUtc.HasValue && archiveInfo.LastWriteTimeUtc != meta.LastModifiedUtc.Value)
+            {
+                if (meta.FileHash is not null && zipEntry.CompressedLength <= HashThresholdBytes)
+                {
+                    using var currentStream = ZipHandler.ExtractToMemory(archivePath, zipEntry.EntryName);
+                    var currentHash = await ComputeStreamHashAsync(currentStream, ct);
+                    if (currentHash != meta.FileHash)
+                        return new FileChangeResult(segmentId, FileChangeStatus.Modified,
+                            "Archive entry hash differs (timestamp and content changed)");
+
+                    return new FileChangeResult(segmentId, FileChangeStatus.Unchanged,
+                        "Archive timestamp differs but entry hash matches");
+                }
+
+                return new FileChangeResult(segmentId, FileChangeStatus.Modified,
+                    "Archive last modified time changed");
+            }
+
+            return new FileChangeResult(segmentId, FileChangeStatus.Unchanged);
+        }
+
+        if (!File.Exists(canonicalSourcePath))
+            return new FileChangeResult(segmentId, FileChangeStatus.Deleted, $"File not found: {canonicalSourcePath}");
+
+        var fileInfo = new FileInfo(canonicalSourcePath);
 
         // Quick checks: size and modification date
         if (meta.FileSizeBytes.HasValue && fileInfo.Length != meta.FileSizeBytes.Value)
@@ -67,12 +102,35 @@ public sealed class FileChangeDetector
     /// </summary>
     public async Task RecordFileMetadataAsync(string segmentId, string sourcePath, CancellationToken ct = default)
     {
-        var fileInfo = new FileInfo(sourcePath);
-        if (!fileInfo.Exists) return;
-
+        var canonicalSourcePath = SourcePathHelper.Normalize(sourcePath);
+        long fileSizeBytes;
+        DateTime lastModifiedUtc;
         string? hash = null;
-        if (fileInfo.Length <= HashThresholdBytes)
-            hash = await ComputeFileHashAsync(sourcePath, ct);
+
+        if (SourcePathHelper.TrySplitArchiveEntry(canonicalSourcePath, out var archivePath, out var entryFullName))
+        {
+            if (!File.Exists(archivePath) || !ZipHandler.TryGetEntry(archivePath, entryFullName, out var zipEntry))
+                return;
+
+            fileSizeBytes = zipEntry.CompressedLength;
+            lastModifiedUtc = File.GetLastWriteTimeUtc(archivePath);
+            if (fileSizeBytes <= HashThresholdBytes)
+            {
+                using var entryStream = ZipHandler.ExtractToMemory(archivePath, zipEntry.EntryName);
+                hash = await ComputeStreamHashAsync(entryStream, ct);
+            }
+        }
+        else
+        {
+            var fileInfo = new FileInfo(canonicalSourcePath);
+            if (!fileInfo.Exists)
+                return;
+
+            fileSizeBytes = fileInfo.Length;
+            lastModifiedUtc = fileInfo.LastWriteTimeUtc;
+            if (fileSizeBytes <= HashThresholdBytes)
+                hash = await ComputeFileHashAsync(canonicalSourcePath, ct);
+        }
 
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
@@ -83,9 +141,9 @@ public sealed class FileChangeDetector
                 file_hash = $4
             WHERE segment_id = $5
             """;
-        cmd.Parameters.Add(new DuckDBParameter { Value = sourcePath });
-        cmd.Parameters.Add(new DuckDBParameter { Value = fileInfo.Length });
-        cmd.Parameters.Add(new DuckDBParameter { Value = fileInfo.LastWriteTimeUtc });
+        cmd.Parameters.Add(new DuckDBParameter { Value = canonicalSourcePath });
+        cmd.Parameters.Add(new DuckDBParameter { Value = fileSizeBytes });
+        cmd.Parameters.Add(new DuckDBParameter { Value = lastModifiedUtc });
         cmd.Parameters.Add(new DuckDBParameter { Value = (object?)hash ?? DBNull.Value });
         cmd.Parameters.Add(new DuckDBParameter { Value = segmentId });
         await cmd.ExecuteNonQueryAsync(ct);
@@ -114,7 +172,20 @@ public sealed class FileChangeDetector
     internal static async Task<string> ComputeFileHashAsync(string filePath, CancellationToken ct = default)
     {
         using var stream = File.OpenRead(filePath);
+        return await ComputeStreamHashAsync(stream, ct);
+    }
+
+    internal static async Task<string> ComputeStreamHashAsync(Stream stream, CancellationToken ct = default)
+    {
+        var originalPosition = stream.CanSeek ? stream.Position : 0;
+        if (stream.CanSeek)
+            stream.Position = 0;
+
         var hash = await SHA256.HashDataAsync(stream, ct);
+
+        if (stream.CanSeek)
+            stream.Position = originalPosition;
+
         return Convert.ToHexStringLower(hash);
     }
 

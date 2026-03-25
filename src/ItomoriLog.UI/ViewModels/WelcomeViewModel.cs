@@ -75,12 +75,14 @@ public class WelcomeViewModel : ViewModelBase
         var sessionFolder = SessionPaths.CreateNew(SessionPath, SessionTitle);
         var dbPath = SessionPaths.GetDbPath(sessionFolder);
 
-        using var factory = new DuckLakeConnectionFactory(dbPath);
-        var store = new SessionStore(factory);
-        await store.InitializeAsync(
-            SessionTitle,
-            string.IsNullOrWhiteSpace(SessionDescription) ? null : SessionDescription,
-            string.IsNullOrWhiteSpace(DefaultTimezone) ? null : DefaultTimezone);
+        using (var factory = new DuckLakeConnectionFactory(dbPath))
+        {
+            var store = new SessionStore(factory);
+            await store.InitializeAsync(
+                SessionTitle,
+                string.IsNullOrWhiteSpace(SessionDescription) ? null : SessionDescription,
+                string.IsNullOrWhiteSpace(DefaultTimezone) ? null : DefaultTimezone);
+        }
 
         // Add to global store
         using var globalStore = new GlobalStore();

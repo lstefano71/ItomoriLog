@@ -40,12 +40,19 @@ public sealed class DetectionEngine
         if (sampleBytes.Length == 0)
             return results;
 
-        for (int i = 0; i < _detectors.Count; i++)
+        var slots = new (DetectionResult result, int priority)?[_detectors.Count];
+        Parallel.For(0, _detectors.Count, i =>
         {
             using var detectorStream = new MemoryStream(sampleBytes, writable: false);
             var result = _detectors[i].Probe(detectorStream, sourceName);
             if (result is not null)
-                results.Add((result, i));
+                slots[i] = (result, i);
+        });
+
+        foreach (var slot in slots)
+        {
+            if (slot.HasValue)
+                results.Add(slot.Value);
         }
 
         // Sort by confidence desc, then priority asc (lower index = higher priority)

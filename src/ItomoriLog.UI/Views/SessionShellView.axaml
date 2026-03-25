@@ -74,21 +74,45 @@
     </Border>
 
     <Panel>
-      <Grid RowDefinitions="Auto,*" ColumnDefinitions="Auto,*">
-        <Grid Grid.Row="0"
+      <Grid RowDefinitions="Auto,Auto,*" ColumnDefinitions="Auto,*">
+        <Border Grid.Row="0"
+                Grid.ColumnSpan="2"
+                Background="{StaticResource Itomori.Panel}"
+                Padding="10,6"
+                IsVisible="{Binding LogsPage, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+            <TextBox Grid.Column="0"
+                     Name="QueryTextBox"
+                     Text="{Binding LogsPage.QueryText}"
+                     Watermark="Search or query... e.g. error timeout timestamp IN '$start..$latest'"
+                     FontSize="13" />
+            <Button Grid.Column="1"
+                    Content="Run query"
+                    Command="{Binding LogsPage.RefreshCommand}"
+                    Padding="12,4" />
+            <TextBlock Grid.Column="2"
+                       Text="{Binding LogsPage.QueryParseError}"
+                       Foreground="{StaticResource Brush.Error}"
+                       VerticalAlignment="Center"
+                       FontSize="11"
+                       IsVisible="{Binding LogsPage.QueryParseError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+          </Grid>
+        </Border>
+
+        <Grid Grid.Row="1"
               Grid.ColumnSpan="2"
               IsVisible="{Binding Timeline, Converter={x:Static ObjectConverters.IsNotNull}}">
           <views:TimelineCanvasView DataContext="{Binding Timeline}" />
         </Grid>
 
-        <Grid Grid.Row="1"
+        <Grid Grid.Row="2"
               Grid.Column="0"
               Width="220"
               IsVisible="{Binding FacetPanel, Converter={x:Static ObjectConverters.IsNotNull}}">
           <views:FacetPanelView DataContext="{Binding FacetPanel}" />
         </Grid>
 
-        <Grid Grid.Row="1"
+        <Grid Grid.Row="2"
               Grid.Column="1"
               IsVisible="{Binding LogsPage, Converter={x:Static ObjectConverters.IsNotNull}}">
           <SplitView IsPaneOpen="{Binding LogsPage.IsDetailOpen}"
@@ -261,11 +285,108 @@
                                  IsVisible="{Binding RequiresDetectionReview}" />
                     </StackPanel>
 
+                    <StackPanel Spacing="5"
+                                IsVisible="{Binding HasEditableOverrideRecipe}">
+                      <TextBlock Text="Ingest recipe"
+                                 FontSize="11"
+                                 FontWeight="SemiBold"
+                                 Foreground="{StaticResource Itomori.SubtleForeground}" />
+                      <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="6" ColumnSpacing="8">
+                        <TextBlock Text="Encoding"
+                                   FontSize="11"
+                                   Foreground="{StaticResource Itomori.SubtleForeground}" />
+                        <ComboBox Grid.Column="1"
+                                  ItemsSource="{Binding EncodingChoices}"
+                                  SelectedItem="{Binding SelectedEncodingChoice}"
+                                  DisplayMemberBinding="{Binding Label}" />
+
+                        <TextBlock Grid.Row="1"
+                                   Text="CSV structure"
+                                   FontSize="11"
+                                   Foreground="{StaticResource Itomori.SubtleForeground}"
+                                   IsVisible="{Binding HasEditableCsvStructure}" />
+                        <StackPanel Grid.Row="1"
+                                    Grid.Column="1"
+                                    Spacing="3"
+                                    IsVisible="{Binding HasEditableCsvStructure}">
+                          <StackPanel Orientation="Horizontal" Spacing="8">
+                            <ComboBox Width="150"
+                                      ItemsSource="{Binding DelimiterChoices}"
+                                      SelectedItem="{Binding SelectedDelimiterChoice}"
+                                      DisplayMemberBinding="{Binding Label}" />
+                            <CheckBox Content="Header row"
+                                      IsChecked="{Binding CsvHasHeader}"
+                                      VerticalAlignment="Center" />
+                          </StackPanel>
+                          <TextBlock Text="{Binding CsvColumnPreview, StringFormat='Columns: {0}'}"
+                                     FontSize="10"
+                                     Foreground="{StaticResource Itomori.Foreground}"
+                                     TextWrapping="Wrap" />
+                          <TextBlock Text="{Binding CsvStructureHint}"
+                                     FontSize="10"
+                                     Foreground="{StaticResource Itomori.SubtleForeground}"
+                                     TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="2"
+                                   Text="{Binding TimestampOverrideLabel}"
+                                   FontSize="11"
+                                   Foreground="{StaticResource Itomori.SubtleForeground}"
+                                   IsVisible="{Binding HasEditableTimestampOverride}" />
+                        <StackPanel Grid.Row="2"
+                                    Grid.Column="1"
+                                    Spacing="3"
+                                    IsVisible="{Binding HasEditableTimestampOverride}">
+                          <TextBox Text="{Binding TimestampOverrideText}"
+                                   Watermark="{Binding TimestampOverrideWatermark}" />
+                          <TextBlock Text="{Binding TimestampOverrideHint}"
+                                     FontSize="10"
+                                     Foreground="{StaticResource Itomori.SubtleForeground}"
+                                     TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="3"
+                                   Text="Timezone"
+                                   FontSize="11"
+                                   Foreground="{StaticResource Itomori.SubtleForeground}" />
+                        <StackPanel Grid.Row="3"
+                                    Grid.Column="1"
+                                    Spacing="3">
+                          <TextBox Text="{Binding TimezoneOverrideText}"
+                                   Watermark="blank = session default" />
+                          <TextBlock Text="{Binding TimezoneOverrideHint}"
+                                     FontSize="10"
+                                     Foreground="{StaticResource Itomori.SubtleForeground}"
+                                     TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="4"
+                                   Text="Status"
+                                   FontSize="11"
+                                   Foreground="{StaticResource Itomori.SubtleForeground}" />
+                        <TextBlock Grid.Row="4"
+                                   Grid.Column="1"
+                                   Text="{Binding DetectionSummary}"
+                                   FontSize="11"
+                                   Foreground="{StaticResource Itomori.Foreground}"
+                                   TextWrapping="Wrap" />
+
+                        <TextBlock Grid.Row="5"
+                                   Grid.ColumnSpan="2"
+                                   Text="{Binding OverrideValidationMessage}"
+                                   FontSize="11"
+                                   Foreground="{StaticResource Brush.SakuraPink}"
+                                   TextWrapping="Wrap"
+                                   IsVisible="{Binding HasOverrideValidationError}" />
+                      </Grid>
+                    </StackPanel>
+
                     <StackPanel Orientation="Horizontal" Spacing="6">
                       <Button Content="Confirm choice"
                               Command="{Binding $parent[UserControl].DataContext.ConfirmDetectionCommand}"
                               CommandParameter="{Binding}"
                               IsVisible="{Binding RequiresDetectionReview}"
+                              IsEnabled="{Binding !HasOverrideValidationError}"
                               Padding="10,4"
                               FontSize="12" />
                       <Button Content="Re-ingest"
@@ -315,6 +436,52 @@
                                  FontSize="11"
                                  TextWrapping="Wrap"
                                  Foreground="{StaticResource Itomori.Foreground}" />
+                    </StackPanel>
+
+                    <StackPanel Spacing="5" IsVisible="{Binding HasFilenameTemplateKey}">
+                      <TextBlock Text="Filename template"
+                                 FontSize="11"
+                                 FontWeight="SemiBold"
+                                 Foreground="{StaticResource Itomori.SubtleForeground}" />
+                      <Border Background="#181C24" CornerRadius="4" Padding="8,6">
+                        <TextBlock Text="{Binding FilenameTemplateKey}"
+                                   FontSize="11"
+                                   TextWrapping="Wrap"
+                                   Foreground="{StaticResource Itomori.Foreground}" />
+                      </Border>
+                    </StackPanel>
+
+                    <StackPanel Spacing="5" IsVisible="{Binding HasFeedbackSuggestions}">
+                      <TextBlock Text="Remembered suggestions"
+                                 FontSize="11"
+                                 FontWeight="SemiBold"
+                                 Foreground="{StaticResource Itomori.SubtleForeground}" />
+                      <ItemsControl ItemsSource="{Binding FeedbackSuggestions}">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="vm:FeedbackSuggestionViewModel">
+                            <Border Background="#181C24" CornerRadius="4" Padding="8,6" Margin="0,0,0,4">
+                              <StackPanel Spacing="3">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                  <TextBlock Text="{Binding Summary}"
+                                             FontSize="11"
+                                             FontWeight="SemiBold"
+                                             Foreground="{StaticResource Itomori.Foreground}" />
+                                  <Border Background="#2A2F3A" CornerRadius="3" Padding="4,0">
+                                    <TextBlock Text="{Binding ConfidenceDisplay}" FontSize="9" />
+                                  </Border>
+                                  <TextBlock Text="{Binding UseCountDisplay}"
+                                             FontSize="10"
+                                             Foreground="{StaticResource Itomori.SubtleForeground}" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding Detail}"
+                                           FontSize="10"
+                                           TextWrapping="Wrap"
+                                           Foreground="{StaticResource Itomori.SubtleForeground}" />
+                              </StackPanel>
+                            </Border>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
                     </StackPanel>
 
                     <StackPanel Spacing="5">

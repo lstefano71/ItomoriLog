@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using DuckDB.NET.Data;
 using FluentAssertions;
 using ItomoriLog.Core.Ingest;
@@ -125,6 +126,23 @@ public class FileIngestPlannerTests : IDisposable
     }
 
     [Fact]
+    public async Task PlanAsync_ZipEntryPath_PlansSpecificEntry()
+    {
+        var conn = await _factory.GetConnectionAsync();
+        await SchemaInitializer.EnsureSchemaAsync(conn);
+
+        var zipPath = CreateTestZip("planner_entry", ("app.log", "2024-01-01 00:00:00 INFO hello\n"));
+        var entrySourcePath = ZipHandler.EnumerateEntries(zipPath).Single().SourcePath;
+
+        var planner = new FileIngestPlanner(conn);
+        var plan = await planner.PlanAsync([entrySourcePath], ExistingFileAction.Skip);
+
+        plan.FilesToIngest.Should().ContainSingle().Which.Should().Be(entrySourcePath);
+        plan.SegmentsToReingest.Should().BeEmpty();
+        plan.SkippedFiles.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task PlanAsync_DirectoryInput_ExpandsRecursively()
     {
         var conn = await _factory.GetConnectionAsync();
@@ -184,5 +202,17 @@ public class FileIngestPlannerTests : IDisposable
     {
         _factory.Dispose();
         try { Directory.Delete(_tempDir, recursive: true); } catch { }
+    }
+
+    private string CreateTestZip(string name, params (string FileName, string Content)[] files)
+    {
+        var zipDir = Path.Combine(_tempDir, $"zipfiles_{name}");
+        Directory.CreateDirectory(zipDir);
+        foreach (var (fileName, content) in files)
+            File.WriteAllText(Path.Combine(zipDir, fileName), content);
+
+        var zipPath = Path.Combine(_tempDir, $"{name}.zip");
+        ZipFile.CreateFromDirectory(zipDir, zipPath);
+        return zipPath;
     }
 }

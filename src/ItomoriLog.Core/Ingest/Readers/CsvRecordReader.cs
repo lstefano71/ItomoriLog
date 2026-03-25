@@ -47,7 +47,7 @@ public sealed class CsvRecordReader : IRecordReader
                 // If no column names were provided, parse them from the header
                 if (_expectedColumnCount == 0)
                 {
-                    _columnNames = ParseCsvLine(headerLine, boundary.Delimiter);
+                    _columnNames = ParseCsvLine(headerLine, boundary.Delimiter, boundary.Quote);
                     _expectedColumnCount = _columnNames.Length;
                 }
             }
@@ -72,7 +72,7 @@ public sealed class CsvRecordReader : IRecordReader
             if (string.IsNullOrWhiteSpace(line))
                 continue;
 
-            var fields = ParseCsvLine(line, _boundary.Delimiter);
+            var fields = ParseCsvLine(line, _boundary.Delimiter, _boundary.Quote);
 
             if (_expectedColumnCount > 0 && fields.Length != _expectedColumnCount)
             {
@@ -140,7 +140,7 @@ public sealed class CsvRecordReader : IRecordReader
         }
     }
 
-    internal static string[] ParseCsvLine(string line, char delimiter)
+    internal static string[] ParseCsvLine(string line, char delimiter, char quote = '"')
     {
         var fields = new List<string>();
         var sb = new StringBuilder();
@@ -153,12 +153,12 @@ public sealed class CsvRecordReader : IRecordReader
 
             if (inQuotes)
             {
-                if (c == '"')
+                if (c == quote)
                 {
                     // Check for escaped quote (RFC 4180)
-                    if (i + 1 < line.Length && line[i + 1] == '"')
+                    if (i + 1 < line.Length && line[i + 1] == quote)
                     {
-                        sb.Append('"');
+                        sb.Append(quote);
                         i += 2;
                         continue;
                     }
@@ -171,7 +171,7 @@ public sealed class CsvRecordReader : IRecordReader
             }
             else
             {
-                if (c == '"')
+                if (c == quote && sb.Length == 0)
                 {
                     inQuotes = true;
                     i++;

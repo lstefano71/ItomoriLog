@@ -22,12 +22,11 @@ public sealed class QueryHistoryService
         using var cmd = _sessionConnection.CreateCommand();
         cmd.CommandText = """
             CREATE TABLE IF NOT EXISTS query_history (
-                id           INTEGER PRIMARY KEY,
+                id           INTEGER NOT NULL,
                 query_text   VARCHAR NOT NULL,
                 executed_utc TIMESTAMP NOT NULL,
                 result_count BIGINT
             );
-            CREATE SEQUENCE IF NOT EXISTS seq_session_qh START 1;
             """;
         await cmd.ExecuteNonQueryAsync(ct);
     }
@@ -42,7 +41,8 @@ public sealed class QueryHistoryService
         using var cmd = _sessionConnection.CreateCommand();
         cmd.CommandText = """
             INSERT INTO query_history (id, query_text, executed_utc, result_count)
-            VALUES (nextval('seq_session_qh'), $1, $2, $3)
+            SELECT COALESCE(MAX(id), 0) + 1, $1, $2, $3
+            FROM query_history
             """;
         cmd.Parameters.Add(new DuckDBParameter { Value = queryText });
         cmd.Parameters.Add(new DuckDBParameter { Value = DateTimeOffset.UtcNow.UtcDateTime });

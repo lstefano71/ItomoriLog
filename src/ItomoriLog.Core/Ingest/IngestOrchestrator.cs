@@ -3,6 +3,7 @@ using System.Text;
 using DuckDB.NET.Data;
 using ItomoriLog.Core.Model;
 using ItomoriLog.Core.Ingest.Readers;
+using ItomoriLog.Core.Storage;
 
 namespace ItomoriLog.Core.Ingest;
 
@@ -12,26 +13,27 @@ public sealed class IngestOrchestrator
     private readonly DetectionEngine _detectionEngine;
     private readonly int _maxConcurrency;
     private readonly int _batchChannelCapacity;
-    private readonly IReadOnlyDictionary<string, DetectionResult> _detectionOverrides;
+    private readonly IReadOnlyDictionary<string, FileFormatOverride> _formatOverrides;
 
     public IngestOrchestrator(
         DuckDBConnection connection,
         DetectionEngine? detectionEngine = null,
         int maxConcurrency = 8,
         int batchChannelCapacity = 16,
-        IReadOnlyDictionary<string, DetectionResult>? detectionOverrides = null)
+        IReadOnlyDictionary<string, FileFormatOverride>? formatOverrides = null)
     {
         _connection = connection;
         _detectionEngine = detectionEngine ?? new DetectionEngine();
         _maxConcurrency = maxConcurrency;
         _batchChannelCapacity = batchChannelCapacity;
-        _detectionOverrides = detectionOverrides ?? new Dictionary<string, DetectionResult>(StringComparer.OrdinalIgnoreCase);
+        _formatOverrides = formatOverrides ?? new Dictionary<string, FileFormatOverride>(StringComparer.OrdinalIgnoreCase);
     }
 
     public async Task<IngestResult> IngestFilesAsync(
         IReadOnlyList<string> filePaths,
         TimeBasisConfig defaultTimeBasis,
         IProgress<IngestProgressUpdate>? progress = null,
+        IProgress<IngestVisibilityUpdate>? visibility = null,
         CancellationToken ct = default)
     {
         var tracker = new IngestRunTracker(_connection);
@@ -39,7 +41,7 @@ public sealed class IngestOrchestrator
         await tracker.RegisterSourcesAsync(
             runId,
             filePaths
-                .Select(CanonicalizeSourcePath)
+                .Select(SourcePathHelper.Normalize)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
             ct);
@@ -49,22 +51,33 @@ public sealed class IngestOrchestrator
         var totalRows = 0L;
         var filesProcessed = 0;
         var entries = new List<FileToIngest>();
-        var transactionOpen = false;
 
         try
         {
-            await ExecuteControlStatementAsync("BEGIN TRANSACTION", ct);
-            transactionOpen = true;
-
             // Expand ZIP files
             entries.Clear();
             foreach (var path in filePaths)
             {
-                if (path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                var canonicalPath = CanonicalizeSourcePath(path);
+                if (SourcePathHelper.TrySplitArchiveEntry(canonicalPath, out var archivePath, out var entryFullName))
                 {
-                    foreach (var zipEntry in ZipHandler.EnumerateEntries(path, skipSink))
+                    if (!ZipHandler.TryGetEntry(archivePath, entryFullName, out var zipEntry))
+                        throw new FileNotFoundException($"Entry not found: {entryFullName}", archivePath);
+
+                    var capturedArchivePath = archivePath;
+                    var capturedEntryName = zipEntry.EntryName;
+                    entries.Add(new FileToIngest(
+                        zipEntry.SourcePath,
+                        capturedEntryName,
+                        () => ZipHandler.ExtractToMemory(capturedArchivePath, capturedEntryName),
+                        isZipEntry: true,
+                        initialSizeBytes: zipEntry.CompressedLength));
+                }
+                else if (SourcePathHelper.IsArchiveFilePath(canonicalPath))
+                {
+                    foreach (var zipEntry in ZipHandler.EnumerateEntries(canonicalPath, skipSink))
                     {
-                        var capturedPath = path;
+                        var capturedPath = canonicalPath;
                         var capturedEntryName = zipEntry.EntryName;
                         entries.Add(new FileToIngest(
                             zipEntry.SourcePath,
@@ -76,7 +89,7 @@ public sealed class IngestOrchestrator
                 }
                 else
                 {
-                    var capturedPath = path;
+                    var capturedPath = canonicalPath;
                     var info = new FileInfo(capturedPath);
                     entries.Add(new FileToIngest(
                         capturedPath,
@@ -112,8 +125,19 @@ public sealed class IngestOrchestrator
                 var inserter = new LogBatchInserter(_connection);
                 await foreach (var batch in channel.Reader.ReadAllAsync(ct))
                 {
-                    await inserter.InsertBatchAsync(batch, ct);
-                    Interlocked.Add(ref totalRows, batch.Count);
+                    await ExecuteInTransactionAsync(async token =>
+                    {
+                        await inserter.InsertBatchAsync(batch, token);
+                    }, ct);
+
+                    var totalCommitted = Interlocked.Add(ref totalRows, batch.Count);
+                    if (visibility is not null && batch.Count > 0)
+                    {
+                        visibility.Report(new IngestVisibilityUpdate(
+                            SourcePath: batch[0].SourcePath,
+                            RowsCommitted: batch.Count,
+                            TotalRowsCommitted: totalCommitted));
+                    }
                 }
             }, ct);
 
@@ -152,22 +176,23 @@ public sealed class IngestOrchestrator
             await writerTask;
 
             var snapshotSegments = segmentRows.ToArray();
-            if (snapshotSegments.Length > 0)
-            {
-                var segmentUpserter = new SegmentUpserter(_connection);
-                await segmentUpserter.UpsertBatchAsync(snapshotSegments, ct);
-            }
-
             var skipRows = skipSink.GetSkips();
-            if (skipRows.Count > 0)
+            await ExecuteInTransactionAsync(async token =>
             {
-                var skipInserter = new SkipBatchInserter(_connection);
-                await skipInserter.InsertBatchAsync(skipRows, sessionId: null, ct);
-            }
+                if (snapshotSegments.Length > 0)
+                {
+                    var segmentUpserter = new SegmentUpserter(_connection);
+                    await segmentUpserter.UpsertBatchAsync(snapshotSegments, token);
+                }
 
-            await tracker.CompleteRunAsync(runId, ct);
-            await ExecuteControlStatementAsync("COMMIT", ct);
-            transactionOpen = false;
+                if (skipRows.Count > 0)
+                {
+                    var skipInserter = new SkipBatchInserter(_connection);
+                    await skipInserter.InsertBatchAsync(skipRows, sessionId: null, token);
+                }
+
+                await tracker.CompleteRunAsync(runId, token);
+            }, ct);
 
             return new IngestResult(
                 RunId: runId,
@@ -178,17 +203,13 @@ public sealed class IngestOrchestrator
         }
         catch (OperationCanceledException)
         {
-            if (transactionOpen)
-                await ExecuteControlStatementAsync("ROLLBACK", CancellationToken.None);
-
+            await CleanupRunDataAsync(runId, CancellationToken.None);
             await tracker.AbandonRunAsync(runId, CancellationToken.None);
             throw;
         }
         catch (Exception) when (ct.IsCancellationRequested is false)
         {
-            if (transactionOpen)
-                await ExecuteControlStatementAsync("ROLLBACK", CancellationToken.None);
-
+            await CleanupRunDataAsync(runId, CancellationToken.None);
             await tracker.FailRunAsync(runId, CancellationToken.None);
             foreach (var entry in entries)
             {
@@ -225,7 +246,9 @@ public sealed class IngestOrchestrator
 
         // Detect format
         DetectionResult? detection;
-        if (!_detectionOverrides.TryGetValue(canonicalSourcePath, out detection))
+        var effectiveTimeBasis = timeBasis;
+        FileFormatOverride? formatOverride = null;
+        if (!_formatOverrides.TryGetValue(canonicalSourcePath, out formatOverride))
         {
             var engineResult = _detectionEngine.Detect(stream, entry.FileName);
             detection = engineResult.Detection;
@@ -275,6 +298,12 @@ public sealed class IngestOrchestrator
                     FileHash: failedFileHash);
             }
         }
+        else
+        {
+            detection = formatOverride.Detection;
+            if (formatOverride.TimeBasisOverride is not null)
+                effectiveTimeBasis = formatOverride.TimeBasisOverride;
+        }
 
         progressReporter.Report(IngestFilePhase.Ingesting, 0, 0, "Ingesting", force: true);
 
@@ -287,7 +316,7 @@ public sealed class IngestOrchestrator
 
         // Create reader based on boundary type
         stream.Position = 0;
-        var encoding = EncodingDetector.Detect(stream);
+        var encoding = formatOverride?.EncodingOverride ?? EncodingDetector.Detect(stream);
         stream.Position = 0;
         var textReader = new StreamReader(stream, encoding, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
         var byteCounter = BuildByteCounter(encoding);
@@ -304,7 +333,7 @@ public sealed class IngestOrchestrator
         {
             ct.ThrowIfCancellationRequested();
 
-            if (!TimestampResolver.TryResolve(detection.Extractor, raw, timeBasis, out var resolvedTimestamp))
+            if (!TimestampResolver.TryResolve(detection.Extractor, raw, effectiveTimeBasis, out var resolvedTimestamp))
             {
                 var seg = skipLogger.BeginSkip(SkipReasonCode.TimeParse,
                     "Timestamp extraction failed", startLine: raw.LineNumber);
@@ -440,30 +469,17 @@ public sealed class IngestOrchestrator
         if (!isZipEntry && File.Exists(sourcePath))
             return new DateTimeOffset(File.GetLastWriteTimeUtc(sourcePath), TimeSpan.Zero);
 
-        var bangIndex = sourcePath.IndexOf('!');
-        if (bangIndex > 0)
+        if (SourcePathHelper.TrySplitArchiveEntry(sourcePath, out var archivePath, out _)
+            && File.Exists(archivePath))
         {
-            var zipPath = sourcePath[..bangIndex];
-            if (File.Exists(zipPath))
-                return new DateTimeOffset(File.GetLastWriteTimeUtc(zipPath), TimeSpan.Zero);
+            return new DateTimeOffset(File.GetLastWriteTimeUtc(archivePath), TimeSpan.Zero);
         }
 
         return DateTimeOffset.UtcNow;
     }
 
     private static string CanonicalizeSourcePath(string sourcePath)
-    {
-        var bangIndex = sourcePath.IndexOf('!');
-        if (bangIndex > 0)
-        {
-            var archivePath = sourcePath[..bangIndex];
-            var entrySuffix = sourcePath[bangIndex..];
-            var fullArchivePath = Path.GetFullPath(archivePath);
-            return $"{fullArchivePath}{entrySuffix}";
-        }
-
-        return Path.GetFullPath(sourcePath);
-    }
+        => SourcePathHelper.Normalize(sourcePath);
 
     private static async Task<string> ComputeStreamHashAsync(Stream stream, CancellationToken ct)
     {
@@ -477,6 +493,50 @@ public sealed class IngestOrchestrator
     {
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = sql;
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private async Task ExecuteInTransactionAsync(Func<CancellationToken, Task> action, CancellationToken ct)
+    {
+        await ExecuteControlStatementAsync("BEGIN TRANSACTION", ct);
+        try
+        {
+            await action(ct);
+            await ExecuteControlStatementAsync("COMMIT", ct);
+        }
+        catch
+        {
+            try
+            {
+                await ExecuteControlStatementAsync("ROLLBACK", CancellationToken.None);
+            }
+            catch
+            {
+                // Preserve the original failure if rollback also fails.
+            }
+
+            throw;
+        }
+    }
+
+    private async Task CleanupRunDataAsync(string runId, CancellationToken ct)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = """
+            DELETE FROM skips
+            WHERE segment_id IN (
+                SELECT segment_id
+                FROM segments
+                WHERE last_ingest_run_id = $1
+            );
+
+            DELETE FROM segments
+            WHERE last_ingest_run_id = $1;
+
+            DELETE FROM logs
+            WHERE ingest_run_id = $1;
+            """;
+        cmd.Parameters.Add(new DuckDBParameter { Value = runId });
         await cmd.ExecuteNonQueryAsync(ct);
     }
 

@@ -13,7 +13,7 @@ public static class SchemaInitializer
 
     private const string Ddl = """
         CREATE TABLE IF NOT EXISTS session (
-            session_id       VARCHAR PRIMARY KEY,
+            session_id       VARCHAR NOT NULL,
             created_utc      TIMESTAMP NOT NULL,
             modified_utc     TIMESTAMP NOT NULL,
             title            VARCHAR NOT NULL,
@@ -39,14 +39,8 @@ public static class SchemaInitializer
             fields                             JSON
         );
 
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_logs_keyset
-            ON logs (timestamp_utc, segment_id, record_index);
-
-        CREATE INDEX IF NOT EXISTS idx_logs_segment
-            ON logs (segment_id);
-
         CREATE TABLE IF NOT EXISTS segments (
-            segment_id         VARCHAR PRIMARY KEY,
+            segment_id         VARCHAR NOT NULL,
             logical_source_id  VARCHAR NOT NULL,
             physical_file_id   VARCHAR NOT NULL,
             min_ts_utc         TIMESTAMP,
@@ -78,11 +72,8 @@ public static class SchemaInitializer
             utc_logged_at       TIMESTAMP NOT NULL
         );
 
-        CREATE INDEX IF NOT EXISTS idx_skips_segment
-            ON skips (segment_id);
-
         CREATE TABLE IF NOT EXISTS rules (
-            rule_id    VARCHAR PRIMARY KEY,
+            rule_id    VARCHAR NOT NULL,
             segment_id VARCHAR,
             rule_type  VARCHAR NOT NULL,
             config     JSON NOT NULL,
@@ -91,7 +82,7 @@ public static class SchemaInitializer
         );
 
         CREATE TABLE IF NOT EXISTS ingest_runs (
-            run_id        VARCHAR PRIMARY KEY,
+            run_id        VARCHAR NOT NULL,
             started_utc   TIMESTAMP NOT NULL,
             completed_utc TIMESTAMP,
             status        VARCHAR NOT NULL
@@ -100,19 +91,14 @@ public static class SchemaInitializer
         CREATE TABLE IF NOT EXISTS ingest_run_sources (
             run_id        VARCHAR NOT NULL,
             source_path   VARCHAR NOT NULL,
-            source_order  INTEGER NOT NULL,
-            PRIMARY KEY (run_id, source_path)
+            source_order  INTEGER NOT NULL
         );
 
-        CREATE INDEX IF NOT EXISTS idx_ingest_run_sources_run
-            ON ingest_run_sources (run_id, source_order);
-
         CREATE TABLE IF NOT EXISTS query_history (
-            id           INTEGER PRIMARY KEY,
+            id           INTEGER NOT NULL,
             query_text   VARCHAR NOT NULL,
             executed_utc TIMESTAMP NOT NULL,
             result_count BIGINT
         );
-        CREATE SEQUENCE IF NOT EXISTS seq_session_qh START 1;
         """;
 }

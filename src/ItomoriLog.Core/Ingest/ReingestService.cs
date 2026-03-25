@@ -1,6 +1,7 @@
 using DuckDB.NET.Data;
 using ItomoriLog.Core.Ingest.Readers;
 using ItomoriLog.Core.Model;
+using ItomoriLog.Core.Storage;
 
 namespace ItomoriLog.Core.Ingest;
 
@@ -23,7 +24,7 @@ public sealed class ReingestService
         string segmentId,
         TimeBasisConfig defaultTimeBasis,
         CancellationToken ct = default,
-        DetectionResult? overrideDetection = null)
+        FileFormatOverride? formatOverride = null)
     {
         // 1. Load segment metadata
         var segment = await LoadSegmentAsync(segmentId, ct);
@@ -35,19 +36,48 @@ public sealed class ReingestService
         if (sourcePath is null)
             return ReingestResult.Failed(segmentId, "No source path found for segment");
 
-        if (!File.Exists(sourcePath))
-            return ReingestResult.Failed(segmentId, $"Source file not found: {sourcePath}");
+        var canonicalSourcePath = SourcePathHelper.Normalize(sourcePath);
+        using var fileStream = new MemoryStream();
+        long sourceSizeBytes;
+        DateTimeOffset sourceLastModifiedUtc;
+        string sourceName;
+
+        if (SourcePathHelper.TrySplitArchiveEntry(canonicalSourcePath, out var archivePath, out var entryFullName))
+        {
+            if (!File.Exists(archivePath))
+                return ReingestResult.Failed(segmentId, $"Source archive not found: {archivePath}");
+
+            if (!ZipHandler.TryGetEntry(archivePath, entryFullName, out var zipEntry))
+                return ReingestResult.Failed(segmentId, $"Source archive entry not found: {entryFullName}");
+
+            using (var entryStream = ZipHandler.ExtractToMemory(archivePath, zipEntry.EntryName))
+                await entryStream.CopyToAsync(fileStream, ct);
+
+            sourceSizeBytes = zipEntry.CompressedLength;
+            sourceLastModifiedUtc = new DateTimeOffset(File.GetLastWriteTimeUtc(archivePath), TimeSpan.Zero);
+            sourceName = Path.GetFileName(zipEntry.EntryName);
+        }
+        else
+        {
+            if (!File.Exists(canonicalSourcePath))
+                return ReingestResult.Failed(segmentId, $"Source file not found: {canonicalSourcePath}");
+
+            using (var fs = File.OpenRead(canonicalSourcePath))
+                await fs.CopyToAsync(fileStream, ct);
+
+            var fileInfo = new FileInfo(canonicalSourcePath);
+            sourceSizeBytes = fileInfo.Length;
+            sourceLastModifiedUtc = new DateTimeOffset(fileInfo.LastWriteTimeUtc, TimeSpan.Zero);
+            sourceName = Path.GetFileName(canonicalSourcePath);
+        }
 
         // 3. Re-detect format from source file
-        using var fileStream = new MemoryStream();
-        using (var fs = File.OpenRead(sourcePath))
-            await fs.CopyToAsync(fileStream, ct);
         fileStream.Position = 0;
 
-        var detection = overrideDetection;
+        var detection = formatOverride?.Detection;
         if (detection is null)
         {
-            var engineResult = _detectionEngine.Detect(fileStream, Path.GetFileName(sourcePath));
+            var engineResult = _detectionEngine.Detect(fileStream, sourceName);
             if (engineResult.Detection is null)
                 return ReingestResult.Failed(segmentId, "Format could not be detected on re-ingest");
             detection = engineResult.Detection;
@@ -55,7 +85,7 @@ public sealed class ReingestService
 
         // 4. Read all records
         fileStream.Position = 0;
-        var encoding = EncodingDetector.Detect(fileStream);
+        var encoding = formatOverride?.EncodingOverride ?? EncodingDetector.Detect(fileStream);
         fileStream.Position = 0;
         var textReader = new StreamReader(fileStream, encoding, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
         var skipSink = new ListSkipSink();
@@ -69,11 +99,13 @@ public sealed class ReingestService
         var tracker = new IngestRunTracker(_connection);
         var runId = await tracker.StartRunAsync(ct);
 
+        var effectiveTimeBasis = formatOverride?.TimeBasisOverride ?? defaultTimeBasis;
+
         while (recordReader.TryReadNext(out var raw))
         {
             ct.ThrowIfCancellationRequested();
 
-            if (!TimestampResolver.TryResolve(detection.Extractor, raw, defaultTimeBasis, out var resolvedTimestamp))
+            if (!TimestampResolver.TryResolve(detection.Extractor, raw, effectiveTimeBasis, out var resolvedTimestamp))
             {
                 var seg = skipLogger.BeginSkip(SkipReasonCode.TimeParse,
                     "Timestamp extraction failed", startLine: raw.LineNumber);
@@ -125,7 +157,7 @@ public sealed class ReingestService
                 TimestampEffectiveOffsetMinutes: offsetMinutes,
                 TimestampOriginal: resolvedTimestamp.TimestampOriginal ?? raw.FirstLine[..Math.Min(raw.FirstLine.Length, 50)],
                 LogicalSourceId: segment.LogicalSourceId,
-                SourcePath: sourcePath,
+                SourcePath: canonicalSourcePath,
                 PhysicalFileId: segment.PhysicalFileId,
                 SegmentId: segmentId,
                 IngestRunId: runId,
@@ -151,19 +183,18 @@ public sealed class ReingestService
 
             DateTimeOffset? minTs = rows.Count > 0 ? rows.Min(r => r.TimestampUtc) : null;
             DateTimeOffset? maxTs = rows.Count > 0 ? rows.Max(r => r.TimestampUtc) : null;
-            var fileInfo = new FileInfo(sourcePath);
-            var fileHash = await FileChangeDetector.ComputeFileHashAsync(sourcePath, ct);
+            var fileHash = await FileChangeDetector.ComputeStreamHashAsync(fileStream, ct);
             await UpdateSegmentAsync(
                 segmentId,
                 runId,
                 rows.Count,
                 minTs,
                 maxTs,
-                sourcePath,
-                fileInfo.Length,
-                new DateTimeOffset(fileInfo.LastWriteTimeUtc, TimeSpan.Zero),
+                canonicalSourcePath,
+                sourceSizeBytes,
+                sourceLastModifiedUtc,
                 fileHash,
-                fileInfo.Length,
+                sourceSizeBytes,
                 ct);
 
             await ExecuteAsync("COMMIT", ct);

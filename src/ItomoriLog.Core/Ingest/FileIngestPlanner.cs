@@ -40,22 +40,47 @@ public sealed class FileIngestPlanner
         {
             ct.ThrowIfCancellationRequested();
 
-            if (expandedPath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            if (SourcePathHelper.IsArchiveFilePath(expandedPath))
             {
-                filesToIngest.Add(Path.GetFullPath(expandedPath));
+                filesToIngest.Add(SourcePathHelper.Normalize(expandedPath));
                 continue;
             }
 
-            var path = Path.GetFullPath(expandedPath);
-            if (!File.Exists(path))
+            var path = SourcePathHelper.Normalize(expandedPath);
+
+            long sourceSizeBytes;
+            DateTimeOffset lastModifiedUtc;
+            if (SourcePathHelper.TrySplitArchiveEntry(path, out var archivePath, out var entryFullName))
             {
-                skippedFiles.Add(new PlannedFileSkip(path, "File does not exist"));
-                continue;
+                if (!File.Exists(archivePath))
+                {
+                    skippedFiles.Add(new PlannedFileSkip(path, "Archive file does not exist"));
+                    continue;
+                }
+
+                if (!ZipHandler.TryGetEntry(archivePath, entryFullName, out var zipEntry))
+                {
+                    skippedFiles.Add(new PlannedFileSkip(path, "Archive entry does not exist"));
+                    continue;
+                }
+
+                sourceSizeBytes = zipEntry.CompressedLength;
+                lastModifiedUtc = new DateTimeOffset(File.GetLastWriteTimeUtc(archivePath), TimeSpan.Zero);
+            }
+            else
+            {
+                if (!File.Exists(path))
+                {
+                    skippedFiles.Add(new PlannedFileSkip(path, "File does not exist"));
+                    continue;
+                }
+
+                var fileInfo = new FileInfo(path);
+                sourceSizeBytes = fileInfo.Length;
+                lastModifiedUtc = new DateTimeOffset(fileInfo.LastWriteTimeUtc, TimeSpan.Zero);
             }
 
-            var fileInfo = new FileInfo(path);
-            var lastModifiedUtc = new DateTimeOffset(fileInfo.LastWriteTimeUtc, TimeSpan.Zero);
-            var physicalFileId = IdentityGenerator.PhysicalFileId(path, fileInfo.Length, lastModifiedUtc);
+            var physicalFileId = IdentityGenerator.PhysicalFileId(path, sourceSizeBytes, lastModifiedUtc);
 
             var exactMatch = await FindExactPhysicalMatchAsync(physicalFileId, ct);
             if (exactMatch is not null)
@@ -107,6 +132,14 @@ public sealed class FileIngestPlanner
         {
             if (string.IsNullOrWhiteSpace(rawPath))
                 continue;
+
+            if (SourcePathHelper.TrySplitArchiveEntry(rawPath, out var archivePath, out var entryFullName))
+            {
+                var entryPath = SourcePathHelper.CombineArchiveEntryPath(archivePath, entryFullName);
+                if (seen.Add(entryPath))
+                    yield return entryPath;
+                continue;
+            }
 
             var fullPath = Path.GetFullPath(rawPath);
             if (File.Exists(fullPath))

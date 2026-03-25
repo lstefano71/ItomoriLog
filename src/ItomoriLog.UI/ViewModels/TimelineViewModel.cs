@@ -171,28 +171,105 @@ public class TimelineViewModel : ViewModelBase
     /// </summary>
     public async Task LoadCoarseBinsAsync()
     {
+        await RefreshDataAsync(preserveViewport: false);
+    }
+
+    public async Task RefreshDataAsync(bool preserveViewport = true)
+    {
         var ct = ResetCancellation();
         IsLoading = true;
         try
         {
+            var previousSessionStart = SessionStart;
+            var previousSessionEnd = SessionEnd;
+            var previousVisibleStart = VisibleStart;
+            var previousVisibleEnd = VisibleEnd;
+            var previousSelectedStart = SelectedStart;
+            var previousSelectedEnd = SelectedEnd;
+
             var range = await _query.GetTimeRangeAsync(ct: ct);
             if (range is null)
             {
                 Bins = [];
+                SessionStart = null;
+                SessionEnd = null;
+                VisibleStart = null;
+                VisibleEnd = null;
                 ClearSelection();
                 return;
             }
 
-            SessionStart = range.Value.Min;
-            SessionEnd = range.Value.Max.AddSeconds(1); // inclusive end
-            VisibleStart = SessionStart;
-            VisibleEnd = SessionEnd;
+            var newSessionStart = range.Value.Min;
+            var newSessionEnd = range.Value.Max.AddSeconds(1); // inclusive end
+            SessionStart = newSessionStart;
+            SessionEnd = newSessionEnd;
 
-            var totalSpan = SessionEnd.Value - SessionStart.Value;
-            CurrentBinWidth = TimelineQuery.ChooseCoarseBinWidth(totalSpan);
+            var wasShowingFullSession =
+                preserveViewport
+                && previousVisibleStart.HasValue
+                && previousVisibleEnd.HasValue
+                && previousSessionStart.HasValue
+                && previousSessionEnd.HasValue
+                && previousVisibleStart.Value == previousSessionStart.Value
+                && previousVisibleEnd.Value == previousSessionEnd.Value;
+
+            if (!preserveViewport
+                || !previousVisibleStart.HasValue
+                || !previousVisibleEnd.HasValue
+                || wasShowingFullSession)
+            {
+                VisibleStart = SessionStart;
+                VisibleEnd = SessionEnd;
+
+                var totalSpan = SessionEnd.Value - SessionStart.Value;
+                CurrentBinWidth = TimelineQuery.ChooseCoarseBinWidth(totalSpan);
+            }
+            else
+            {
+                var clampedVisibleStart = previousVisibleStart.Value < newSessionStart
+                    ? newSessionStart
+                    : previousVisibleStart.Value;
+                var clampedVisibleEnd = previousVisibleEnd.Value > newSessionEnd
+                    ? newSessionEnd
+                    : previousVisibleEnd.Value;
+
+                if (clampedVisibleEnd <= clampedVisibleStart)
+                {
+                    VisibleStart = SessionStart;
+                    VisibleEnd = SessionEnd;
+                    var totalSpan = SessionEnd.Value - SessionStart.Value;
+                    CurrentBinWidth = TimelineQuery.ChooseCoarseBinWidth(totalSpan);
+                }
+                else
+                {
+                    VisibleStart = clampedVisibleStart;
+                    VisibleEnd = clampedVisibleEnd;
+                    CurrentBinWidth = TimelineQuery.ChooseFineBinWidth(VisibleEnd.Value - VisibleStart.Value);
+                }
+            }
+
+            if (previousSelectedStart.HasValue && previousSelectedEnd.HasValue)
+            {
+                var clampedSelectedStart = previousSelectedStart.Value < newSessionStart
+                    ? newSessionStart
+                    : previousSelectedStart.Value;
+                var clampedSelectedEnd = previousSelectedEnd.Value > newSessionEnd
+                    ? newSessionEnd
+                    : previousSelectedEnd.Value;
+
+                if (clampedSelectedEnd > clampedSelectedStart)
+                {
+                    SelectedStart = clampedSelectedStart;
+                    SelectedEnd = clampedSelectedEnd;
+                }
+                else
+                {
+                    ClearSelection();
+                }
+            }
 
             var bins = await _query.QueryBinsAsync(
-                SessionStart, SessionEnd, CurrentBinWidth, ct: ct);
+                VisibleStart, VisibleEnd, CurrentBinWidth, ct: ct);
 
             ct.ThrowIfCancellationRequested();
             Bins = bins;

@@ -4,36 +4,8 @@
              x:Class="ItomoriLog.UI.Views.LogGridView"
              x:DataType="vm:LogsPageViewModel">
 
-  <Grid RowDefinitions="Auto,*,Auto">
-    <!-- Filter Bar -->
-    <Border Grid.Row="0" Background="{StaticResource Itomori.Panel}" Padding="10,6">
-      <StackPanel Orientation="Horizontal" Spacing="8">
-        <TextBox Watermark="Text search..."
-                 Name="FilterTextBox"
-                 Text="{Binding TextSearch}"
-                 Width="190"
-                 FontSize="12" />
-        <TextBox Watermark="Query (text + timestamp IN '$start..$latest')"
-                  Name="QueryTextBox"
-                  Text="{Binding QueryText}"
-                  Width="380"
-                  FontSize="12" />
-        <Button Content="↻ Refresh" Command="{Binding RefreshCommand}" />
-        <TextBlock Text="{Binding StatusText}"
-                     Foreground="{StaticResource Itomori.SubtleForeground}"
-                    VerticalAlignment="Center" Margin="8,0,0,0"
-                    FontSize="11" />
-        <TextBlock Text="{Binding QueryParseError}"
-                    Foreground="{StaticResource Brush.Error}"
-                    VerticalAlignment="Center"
-                    Margin="8,0,0,0"
-                    FontSize="11"
-                    IsVisible="{Binding QueryParseError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-      </StackPanel>
-    </Border>
-
-    <!-- Log DataGrid -->
-    <DataGrid Grid.Row="1"
+  <Grid RowDefinitions="*,Auto">
+    <DataGrid Grid.Row="0"
               Name="LogDataGrid"
               ItemsSource="{Binding CurrentPage}"
               SelectedItem="{Binding SelectedRow}"
@@ -115,8 +87,7 @@
       </DataGrid.Columns>
     </DataGrid>
 
-    <!-- Browse Status -->
-    <Border Grid.Row="2" Background="{StaticResource Itomori.Panel}" Padding="10,4">
+    <Border Grid.Row="1" Background="{StaticResource Itomori.Panel}" Padding="10,4">
       <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center">
         <TextBlock Text="{Binding StatusText}"
                     Foreground="{StaticResource Itomori.Foreground}"

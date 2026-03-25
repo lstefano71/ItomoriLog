@@ -31,9 +31,41 @@ public static class ZipHandler
                 continue;
             }
 
-            var sourcePath = $"{zipPath}!/{entry.FullName}";
+            var sourcePath = SourcePathHelper.CombineArchiveEntryPath(zipPath, entry.FullName);
             yield return new ZipFileEntry(entry.FullName, sourcePath, entry.Length, entry.LastWriteTime);
         }
+    }
+
+    public static bool TryGetEntry(string zipPath, string entryFullName, out ZipFileEntry entry)
+    {
+        var normalizedZipPath = Path.GetFullPath(zipPath);
+        var normalizedEntryName = entryFullName.TrimStart('/', '\\').Replace('\\', '/');
+
+        using var archive = ZipFile.OpenRead(normalizedZipPath);
+        var zipEntry = archive.GetEntry(normalizedEntryName);
+        if (zipEntry is null || string.IsNullOrEmpty(zipEntry.Name))
+        {
+            entry = null!;
+            return false;
+        }
+
+        entry = new ZipFileEntry(
+            zipEntry.FullName,
+            SourcePathHelper.CombineArchiveEntryPath(normalizedZipPath, zipEntry.FullName),
+            zipEntry.Length,
+            zipEntry.LastWriteTime);
+        return true;
+    }
+
+    public static bool TryGetEntry(string sourcePath, out ZipFileEntry entry)
+    {
+        if (!SourcePathHelper.TrySplitArchiveEntry(sourcePath, out var archivePath, out var entryFullName))
+        {
+            entry = null!;
+            return false;
+        }
+
+        return TryGetEntry(archivePath, entryFullName, out entry);
     }
 
     public static MemoryStream ExtractToMemory(string zipPath, string entryFullName)
