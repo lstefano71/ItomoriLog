@@ -39,16 +39,16 @@ public sealed class FileChangeDetector
             if (!ZipHandler.TryGetEntry(archivePath, entryFullName, out var zipEntry))
                 return new FileChangeResult(segmentId, FileChangeStatus.Deleted, $"Archive entry not found: {entryFullName}");
 
-            if (meta.FileSizeBytes.HasValue && zipEntry.CompressedLength != meta.FileSizeBytes.Value)
+            if (meta.FileSizeBytes.HasValue && zipEntry.SizeBytes != meta.FileSizeBytes.Value)
                 return new FileChangeResult(segmentId, FileChangeStatus.Modified,
-                    $"Size changed: {meta.FileSizeBytes.Value} → {zipEntry.CompressedLength}");
+                    $"Size changed: {meta.FileSizeBytes.Value} → {zipEntry.SizeBytes}");
 
             var archiveInfo = new FileInfo(archivePath);
             if (meta.LastModifiedUtc.HasValue && archiveInfo.LastWriteTimeUtc != meta.LastModifiedUtc.Value)
             {
-                if (meta.FileHash is not null && zipEntry.CompressedLength <= HashThresholdBytes)
+                if (meta.FileHash is not null && zipEntry.SizeBytes <= HashThresholdBytes)
                 {
-                    using var currentStream = ZipHandler.ExtractToMemory(archivePath, zipEntry.EntryName);
+                    await using var currentStream = ZipHandler.OpenRead(archivePath, zipEntry.EntryName);
                     var currentHash = await ComputeStreamHashAsync(currentStream, ct);
                     if (currentHash != meta.FileHash)
                         return new FileChangeResult(segmentId, FileChangeStatus.Modified,
@@ -112,11 +112,11 @@ public sealed class FileChangeDetector
             if (!File.Exists(archivePath) || !ZipHandler.TryGetEntry(archivePath, entryFullName, out var zipEntry))
                 return;
 
-            fileSizeBytes = zipEntry.CompressedLength;
+            fileSizeBytes = zipEntry.SizeBytes;
             lastModifiedUtc = File.GetLastWriteTimeUtc(archivePath);
             if (fileSizeBytes <= HashThresholdBytes)
             {
-                using var entryStream = ZipHandler.ExtractToMemory(archivePath, zipEntry.EntryName);
+                await using var entryStream = ZipHandler.OpenRead(archivePath, zipEntry.EntryName);
                 hash = await ComputeStreamHashAsync(entryStream, ct);
             }
         }

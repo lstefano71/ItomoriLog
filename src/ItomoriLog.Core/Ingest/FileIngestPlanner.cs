@@ -64,7 +64,7 @@ public sealed class FileIngestPlanner
                     continue;
                 }
 
-                sourceSizeBytes = zipEntry.CompressedLength;
+                sourceSizeBytes = zipEntry.SizeBytes;
                 lastModifiedUtc = new DateTimeOffset(File.GetLastWriteTimeUtc(archivePath), TimeSpan.Zero);
             }
             else

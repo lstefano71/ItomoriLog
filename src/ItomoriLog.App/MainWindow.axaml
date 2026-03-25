@@ -22,30 +22,7 @@
   </Window.DataTemplates>
 
   <Panel>
-    <Grid RowDefinitions="Auto,*,Auto">
-      <!-- Title Bar -->
-      <Border Grid.Row="0" Background="{StaticResource Itomori.Panel}" Padding="16,10">
-        <StackPanel Orientation="Horizontal" Spacing="12">
-          <TextBlock Text="ItomoriLog"
-                     FontSize="20" FontWeight="SemiBold"
-                     Foreground="{StaticResource Brush.SakuraPink}" />
-          <TextBlock Text="Braiding time from your logs"
-                     FontSize="14"
-                     Foreground="{StaticResource Itomori.SubtleForeground}"
-                     VerticalAlignment="Center" />
-        </StackPanel>
-      </Border>
-
-      <!-- Content Area (view router) -->
-      <ContentControl Grid.Row="1" Content="{Binding CurrentView}" />
-
-      <!-- Status Bar -->
-      <Border Grid.Row="2" Background="{StaticResource Itomori.Panel}" Padding="16,6">
-        <TextBlock Text="Ready"
-                   FontSize="12"
-                   Foreground="{StaticResource Itomori.SubtleForeground}" />
-      </Border>
-    </Grid>
+    <ContentControl Content="{Binding CurrentView}" />
 
     <!-- Command Palette overlay (on top of everything) -->
     <views:CommandPaletteView DataContext="{Binding CommandPalette}" />

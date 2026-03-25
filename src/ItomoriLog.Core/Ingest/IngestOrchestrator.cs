@@ -69,9 +69,9 @@ public sealed class IngestOrchestrator
                     entries.Add(new FileToIngest(
                         zipEntry.SourcePath,
                         capturedEntryName,
-                        () => ZipHandler.ExtractToMemory(capturedArchivePath, capturedEntryName),
+                        () => ZipHandler.OpenRead(capturedArchivePath, capturedEntryName),
                         isZipEntry: true,
-                        initialSizeBytes: zipEntry.CompressedLength));
+                        initialSizeBytes: zipEntry.SizeBytes));
                 }
                 else if (SourcePathHelper.IsArchiveFilePath(canonicalPath))
                 {
@@ -82,9 +82,9 @@ public sealed class IngestOrchestrator
                         entries.Add(new FileToIngest(
                             zipEntry.SourcePath,
                             capturedEntryName,
-                            () => ZipHandler.ExtractToMemory(capturedPath, capturedEntryName),
+                            () => ZipHandler.OpenRead(capturedPath, capturedEntryName),
                             isZipEntry: true,
-                            initialSizeBytes: zipEntry.CompressedLength));
+                            initialSizeBytes: zipEntry.SizeBytes));
                     }
                 }
                 else
@@ -235,12 +235,13 @@ public sealed class IngestOrchestrator
         IProgress<IngestProgressUpdate>? progress,
         CancellationToken ct)
     {
-        using var stream = entry.OpenStream();
+        await using var sourceStream = entry.OpenStream();
         var canonicalSourcePath = CanonicalizeSourcePath(entry.SourcePath);
         var logicalSourceId = IdentityGenerator.LogicalSourceId(entry.FileName);
         var lastModifiedUtc = ResolveLastModifiedUtc(canonicalSourcePath, entry.isZipEntry);
-        var totalBytes = stream.Length;
+        var totalBytes = entry.initialSizeBytes;
         var progressReporter = new ProgressReporter(canonicalSourcePath, totalBytes, progress);
+        var sampleBytes = await StreamSampling.ReadPrefixAsync(sourceStream, 256 * 1024, ct);
 
         progressReporter.Report(IngestFilePhase.Sniffing, 0, 0, "Sniffing", force: true);
 
@@ -250,13 +251,14 @@ public sealed class IngestOrchestrator
         FileFormatOverride? formatOverride = null;
         if (!_formatOverrides.TryGetValue(canonicalSourcePath, out formatOverride))
         {
-            var engineResult = _detectionEngine.Detect(stream, entry.FileName);
+            using var detectionStream = new MemoryStream(sampleBytes, writable: false);
+            var engineResult = _detectionEngine.Detect(detectionStream, entry.FileName);
             detection = engineResult.Detection;
             if (detection is null)
             {
                 var failedPhysicalFileId = IdentityGenerator.PhysicalFileId(
                     canonicalSourcePath,
-                    stream.Length,
+                    totalBytes,
                     lastModifiedUtc);
                 var failedSegmentId = IdentityGenerator.SegmentId(failedPhysicalFileId);
 
@@ -272,8 +274,9 @@ public sealed class IngestOrchestrator
                     UtcLoggedAt: DateTimeOffset.UtcNow));
 
                 var failedSourcePath = canonicalSourcePath;
-                var failedFileSize = stream.Length;
-                var failedFileHash = await ComputeStreamHashAsync(stream, ct);
+                var failedFileSize = totalBytes;
+                await using var failedHashStream = entry.OpenStream();
+                var failedFileHash = await FileChangeDetector.ComputeStreamHashAsync(failedHashStream, ct);
 
                 progressReporter.Report(
                     IngestFilePhase.Skipped,
@@ -309,16 +312,16 @@ public sealed class IngestOrchestrator
 
         // Generate identity
         var physicalFileId = IdentityGenerator.PhysicalFileId(
-            canonicalSourcePath, stream.Length, lastModifiedUtc);
+            canonicalSourcePath, totalBytes, lastModifiedUtc);
         var segmentId = IdentityGenerator.SegmentId(physicalFileId);
 
         var skipLogger = new SkipLogger(skipSink, logicalSourceId, physicalFileId, segmentId);
 
         // Create reader based on boundary type
-        stream.Position = 0;
-        var encoding = formatOverride?.EncodingOverride ?? EncodingDetector.Detect(stream);
-        stream.Position = 0;
-        var textReader = new StreamReader(stream, encoding, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
+        using var encodingStream = new MemoryStream(sampleBytes, writable: false);
+        var encoding = formatOverride?.EncodingOverride ?? EncodingDetector.Detect(encodingStream);
+        using var replayStream = new ReplayPrefixStream(sampleBytes, sourceStream, leaveInnerOpen: true);
+        var textReader = new StreamReader(replayStream, encoding, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
         var byteCounter = BuildByteCounter(encoding);
         using var recordReader = CreateReader(detection.Boundary, textReader, skipLogger, byteCounter);
 
@@ -417,7 +420,8 @@ public sealed class IngestOrchestrator
         if (batch.Count > 0)
             await writer.WriteAsync(batch, ct);
 
-        var fileHash = await ComputeStreamHashAsync(stream, ct);
+        await using var hashStream = entry.OpenStream();
+        var fileHash = await FileChangeDetector.ComputeStreamHashAsync(hashStream, ct);
 
         progressReporter.Report(
             IngestFilePhase.Completed,
@@ -435,9 +439,9 @@ public sealed class IngestOrchestrator
             RowCount: recordIndex,
             LastIngestRunId: runId,
             Active: true,
-            LastByteOffset: stream.Length,
+            LastByteOffset: totalBytes,
             SourcePath: canonicalSourcePath,
-            FileSizeBytes: stream.Length,
+            FileSizeBytes: totalBytes,
             LastModifiedUtc: lastModifiedUtc,
             FileHash: fileHash);
     }
@@ -480,14 +484,6 @@ public sealed class IngestOrchestrator
 
     private static string CanonicalizeSourcePath(string sourcePath)
         => SourcePathHelper.Normalize(sourcePath);
-
-    private static async Task<string> ComputeStreamHashAsync(Stream stream, CancellationToken ct)
-    {
-        stream.Position = 0;
-        var hashBytes = await System.Security.Cryptography.SHA256.HashDataAsync(stream, ct);
-        stream.Position = 0;
-        return Convert.ToHexStringLower(hashBytes);
-    }
 
     private async Task ExecuteControlStatementAsync(string sql, CancellationToken ct)
     {

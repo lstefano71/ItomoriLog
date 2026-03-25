@@ -45,6 +45,7 @@ public class SessionShellViewModel : ViewModelBase
     private double? _overallEtaSeconds;
     private long _overallBytesProcessed;
     private long _overallBytesTotal;
+    private long _ingestBaselineRecordCount;
     private DateTimeOffset? _overallProgressStartedUtc;
     private LogsPageViewModel? _logsPage;
     private TimelineViewModel? _timeline;
@@ -589,6 +590,9 @@ public class SessionShellViewModel : ViewModelBase
                 }
             }
 
+            if (plan.SegmentsToReingest.Count > 0)
+                RecordCount = await ReadRecordCountAsync(conn);
+
             foreach (var reingestPath in reingestRequestedPaths)
             {
                 if (TryFindStagedSource(reingestPath, out var reingestItem))
@@ -624,6 +628,7 @@ public class SessionShellViewModel : ViewModelBase
             var progress = new Progress<IngestProgressUpdate>(OnIngestProgress);
             var visibility = new Progress<IngestVisibilityUpdate>(OnIngestVisibilityCommitted);
             var orchestrator = new IngestOrchestrator(conn, formatOverrides: overrides);
+            _ingestBaselineRecordCount = RecordCount;
             var result = await orchestrator.IngestFilesAsync(plan.FilesToIngest, defaultTz, progress, visibility);
 
             RecordCount = await ReadRecordCountAsync(conn);
@@ -876,8 +881,9 @@ public class SessionShellViewModel : ViewModelBase
                     return;
                 }
 
-                await using var entryStream = ZipHandler.ExtractToMemory(archivePath, entryFullName);
-                ranked = await BuildRankedDetectionChoicesAsync(entryStream, Path.GetFileName(entryFullName));
+                ranked = await BuildRankedDetectionChoicesAsync(
+                    ZipHandler.OpenRead(archivePath, entryFullName),
+                    Path.GetFileName(entryFullName));
             }
             else
             {
@@ -944,13 +950,11 @@ public class SessionShellViewModel : ViewModelBase
     private async Task<List<DetectionChoiceViewModel>> BuildRankedDetectionChoicesAsync(Stream stream, string sourceName)
     {
         await using var ownedStream = stream;
-        var encoding = EncodingDetector.Detect(stream);
-        stream.Position = 0;
-
-        var sniffBuffer = new byte[(int)Math.Min(stream.Length, 128 * 1024)];
-        var bytesRead = await stream.ReadAsync(sniffBuffer.AsMemory(0, sniffBuffer.Length));
-        using var sniff = new MemoryStream(sniffBuffer, 0, bytesRead, writable: false);
-        var sampleLines = CsvPreviewHelper.ReadNonEmptyLines(sniffBuffer, bytesRead, encoding, 32);
+        var sniffBuffer = await StreamSampling.ReadPrefixAsync(stream, 128 * 1024);
+        using var encodingStream = new MemoryStream(sniffBuffer, writable: false);
+        var encoding = EncodingDetector.Detect(encodingStream);
+        using var sniff = new MemoryStream(sniffBuffer, writable: false);
+        var sampleLines = CsvPreviewHelper.ReadNonEmptyLines(sniffBuffer, sniffBuffer.Length, encoding, 32);
 
         var candidates = _detectionEngine.DetectCandidates(sniff, sourceName);
         return candidates
@@ -964,8 +968,9 @@ public class SessionShellViewModel : ViewModelBase
         var choices = new List<DetectionChoiceViewModel>();
         foreach (var entry in ZipHandler.EnumerateEntries(zipPath).Take(12))
         {
-            await using var entryStream = ZipHandler.ExtractToMemory(zipPath, entry.EntryName);
-            var ranked = await BuildRankedDetectionChoicesAsync(entryStream, entry.EntryName);
+            var ranked = await BuildRankedDetectionChoicesAsync(
+                ZipHandler.OpenRead(zipPath, entry.EntryName),
+                entry.EntryName);
             var top = ranked.FirstOrDefault();
             if (top is null)
                 continue;
@@ -1657,6 +1662,7 @@ public class SessionShellViewModel : ViewModelBase
         if (!IsIngesting || update.RowsCommitted <= 0)
             return;
 
+        RecordCount = _ingestBaselineRecordCount + update.TotalRowsCommitted;
         RequestLiveBrowseRefresh();
     }
 
@@ -1953,7 +1959,7 @@ public class SessionShellViewModel : ViewModelBase
     }
 
     private string BuildSessionStatus(string detail) =>
-        $"{RecordCount:N0} records | {detail} | {_sessionFolder}";
+        $"{detail} | {_sessionFolder}";
 
     private void DismissRecoveryBanner()
     {

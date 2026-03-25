@@ -364,12 +364,18 @@ public class OrchestratorTests : IDisposable
     }
 
     [Fact]
-    public void ZipHandler_ExtractToMemory_ReturnsContent()
+    public void ZipHandler_OpenRead_ReturnsStreamingContent()
     {
         var content = "2024-03-15 10:00:00 INFO Test message\n";
         var zipPath = CreateTestZip("test_extract", ("test.log", content));
 
-        using var ms = ZipHandler.ExtractToMemory(zipPath, "test.log");
+        using var stream = ZipHandler.OpenRead(zipPath, "test.log");
+        stream.Should().NotBeOfType<MemoryStream>();
+        stream.CanRead.Should().BeTrue();
+
+        using var ms = new MemoryStream();
+        stream.CopyTo(ms);
+
         var text = Encoding.UTF8.GetString(ms.ToArray());
         text.Should().Be(content);
     }

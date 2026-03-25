@@ -37,7 +37,7 @@ public sealed class ReingestService
             return ReingestResult.Failed(segmentId, "No source path found for segment");
 
         var canonicalSourcePath = SourcePathHelper.Normalize(sourcePath);
-        using var fileStream = new MemoryStream();
+        Func<Stream> reopenSourceStream;
         long sourceSizeBytes;
         DateTimeOffset sourceLastModifiedUtc;
         string sourceName;
@@ -50,10 +50,8 @@ public sealed class ReingestService
             if (!ZipHandler.TryGetEntry(archivePath, entryFullName, out var zipEntry))
                 return ReingestResult.Failed(segmentId, $"Source archive entry not found: {entryFullName}");
 
-            using (var entryStream = ZipHandler.ExtractToMemory(archivePath, zipEntry.EntryName))
-                await entryStream.CopyToAsync(fileStream, ct);
-
-            sourceSizeBytes = zipEntry.CompressedLength;
+            reopenSourceStream = () => ZipHandler.OpenRead(archivePath, zipEntry.EntryName);
+            sourceSizeBytes = zipEntry.SizeBytes;
             sourceLastModifiedUtc = new DateTimeOffset(File.GetLastWriteTimeUtc(archivePath), TimeSpan.Zero);
             sourceName = Path.GetFileName(zipEntry.EntryName);
         }
@@ -62,32 +60,32 @@ public sealed class ReingestService
             if (!File.Exists(canonicalSourcePath))
                 return ReingestResult.Failed(segmentId, $"Source file not found: {canonicalSourcePath}");
 
-            using (var fs = File.OpenRead(canonicalSourcePath))
-                await fs.CopyToAsync(fileStream, ct);
-
+            reopenSourceStream = () => File.OpenRead(canonicalSourcePath);
             var fileInfo = new FileInfo(canonicalSourcePath);
             sourceSizeBytes = fileInfo.Length;
             sourceLastModifiedUtc = new DateTimeOffset(fileInfo.LastWriteTimeUtc, TimeSpan.Zero);
             sourceName = Path.GetFileName(canonicalSourcePath);
         }
 
-        // 3. Re-detect format from source file
-        fileStream.Position = 0;
+        await using var sourceStream = reopenSourceStream();
+        var sampleBytes = await StreamSampling.ReadPrefixAsync(sourceStream, 256 * 1024, ct);
 
+        // 3. Re-detect format from source file
         var detection = formatOverride?.Detection;
         if (detection is null)
         {
-            var engineResult = _detectionEngine.Detect(fileStream, sourceName);
+            using var detectionStream = new MemoryStream(sampleBytes, writable: false);
+            var engineResult = _detectionEngine.Detect(detectionStream, sourceName);
             if (engineResult.Detection is null)
                 return ReingestResult.Failed(segmentId, "Format could not be detected on re-ingest");
             detection = engineResult.Detection;
         }
 
         // 4. Read all records
-        fileStream.Position = 0;
-        var encoding = formatOverride?.EncodingOverride ?? EncodingDetector.Detect(fileStream);
-        fileStream.Position = 0;
-        var textReader = new StreamReader(fileStream, encoding, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
+        using var encodingStream = new MemoryStream(sampleBytes, writable: false);
+        var encoding = formatOverride?.EncodingOverride ?? EncodingDetector.Detect(encodingStream);
+        using var replayStream = new ReplayPrefixStream(sampleBytes, sourceStream, leaveInnerOpen: true);
+        var textReader = new StreamReader(replayStream, encoding, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
         var skipSink = new ListSkipSink();
         var skipLogger = new SkipLogger(skipSink, segment.LogicalSourceId, segment.PhysicalFileId, segmentId);
         using var recordReader = CreateReader(detection.Boundary, textReader, skipLogger);
@@ -183,7 +181,8 @@ public sealed class ReingestService
 
             DateTimeOffset? minTs = rows.Count > 0 ? rows.Min(r => r.TimestampUtc) : null;
             DateTimeOffset? maxTs = rows.Count > 0 ? rows.Max(r => r.TimestampUtc) : null;
-            var fileHash = await FileChangeDetector.ComputeStreamHashAsync(fileStream, ct);
+            await using var hashStream = reopenSourceStream();
+            var fileHash = await FileChangeDetector.ComputeStreamHashAsync(hashStream, ct);
             await UpdateSegmentAsync(
                 segmentId,
                 runId,
