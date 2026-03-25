@@ -110,27 +110,34 @@ public class FacetPanelViewModel : ViewModelBase
             var levelCacheKey = BuildCacheKey("levels", FilterStart, FilterEnd, includedSources);
             var sourceCacheKey = BuildCacheKey("sources", FilterStart, FilterEnd, includedLevels);
 
-            // Query levels
-            FacetItem[] levelItems;
-            if (!_cache.TryGetValue(levelCacheKey, out levelItems!)) {
-                levelItems = await _query.QueryLevelsAsync(
-                    FilterStart, FilterEnd, includedSources.Count > 0 ? includedSources : null, ct);
-                _cache[levelCacheKey] = levelItems;
-            }
+            var levelCached = _cache.TryGetValue(levelCacheKey, out var levelItems);
+            var sourceCached = _cache.TryGetValue(sourceCacheKey, out var sourceItems);
 
-            // Query sources
-            FacetItem[] sourceItems;
-            if (!_cache.TryGetValue(sourceCacheKey, out sourceItems!)) {
-                sourceItems = await _query.QuerySourcesAsync(
-                    FilterStart, FilterEnd, includedLevels.Count > 0 ? includedLevels : null, ct);
-                _cache[sourceCacheKey] = sourceItems;
+            if (!levelCached && !sourceCached && includedSources.Count == 0 && includedLevels.Count == 0) {
+                // Both cache misses with no cross-filters: use a single combined query
+                // (one CTE scan instead of two sequential full-table scans).
+                (levelItems, sourceItems) = await _query.QueryFacetsAsync(FilterStart, FilterEnd, ct);
+                _cache[levelCacheKey] = levelItems!;
+                _cache[sourceCacheKey] = sourceItems!;
+            } else {
+                if (!levelCached) {
+                    levelItems = await _query.QueryLevelsAsync(
+                        FilterStart, FilterEnd, includedSources.Count > 0 ? includedSources : null, ct);
+                    _cache[levelCacheKey] = levelItems;
+                }
+
+                if (!sourceCached) {
+                    sourceItems = await _query.QuerySourcesAsync(
+                        FilterStart, FilterEnd, includedLevels.Count > 0 ? includedLevels : null, ct);
+                    _cache[sourceCacheKey] = sourceItems;
+                }
             }
 
             ct.ThrowIfCancellationRequested();
 
             // Merge with existing selection states
-            LevelFacets = MergeWithExisting(levelItems, LevelFacets, OnLevelFacetStateChanged);
-            SourceFacets = MergeWithExisting(sourceItems, SourceFacets, OnSourceFacetStateChanged);
+            LevelFacets = MergeWithExisting(levelItems!, LevelFacets, OnLevelFacetStateChanged);
+            SourceFacets = MergeWithExisting(sourceItems!, SourceFacets, OnSourceFacetStateChanged);
         } catch (OperationCanceledException) { } finally {
             IsLoading = false;
         }

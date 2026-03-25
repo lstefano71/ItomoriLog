@@ -61,6 +61,58 @@ public sealed class FacetQuery
         return await ExecuteFacetQueryAsync(sql, parameters, ct);
     }
 
+    /// <summary>
+    /// Get both level and source facet counts in a single DB round-trip using a CTE.
+    /// Only valid when no cross-filters are applied (both <paramref name="sourceIds"/> and
+    /// <paramref name="levels"/> are empty/null); the CTE scans <c>logs</c> once and
+    /// re-aggregates for each facet dimension.
+    /// </summary>
+    public async Task<(FacetItem[] Levels, FacetItem[] Sources)> QueryFacetsAsync(
+        DateTimeOffset? startUtc = null,
+        DateTimeOffset? endUtc = null,
+        CancellationToken ct = default)
+    {
+        var (whereClause, parameters) = BuildWhereClause(startUtc, endUtc);
+
+        var sql = $"""
+            WITH agg AS (
+                SELECT level, logical_source_id, COUNT(*) AS cnt
+                FROM logs
+                {whereClause}
+                GROUP BY level, logical_source_id
+            )
+            SELECT 'level' AS facet_type, level AS value, SUM(cnt) AS cnt
+            FROM agg
+            GROUP BY level
+            UNION ALL
+            SELECT 'source' AS facet_type, logical_source_id AS value, SUM(cnt) AS cnt
+            FROM agg
+            GROUP BY logical_source_id
+            ORDER BY facet_type, cnt DESC
+            """;
+
+        var conn = await _factory.GetConnectionAsync(ct);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        foreach (var p in parameters)
+            cmd.Parameters.Add(new DuckDBParameter { Value = p });
+
+        var levels = new List<FacetItem>();
+        var sources = new List<FacetItem>();
+        using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct)) {
+            var facetType = reader.GetString(0);
+            var value = reader.IsDBNull(1) ? "(none)" : reader.GetString(1);
+            var count = reader.GetInt64(2);
+            if (facetType == "level")
+                levels.Add(new FacetItem(value, count));
+            else
+                sources.Add(new FacetItem(value, count));
+        }
+
+        return (levels.ToArray(), sources.ToArray());
+    }
+
     private static (string WhereClause, List<object> Parameters) BuildWhereClause(
         DateTimeOffset? startUtc,
         DateTimeOffset? endUtc,

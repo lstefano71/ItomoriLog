@@ -1,5 +1,7 @@
 using DuckDB.NET.Data;
 
+using System.Text;
+
 namespace ItomoriLog.Core.Ingest;
 
 public enum ExistingFileAction
@@ -36,11 +38,15 @@ public sealed class FileIngestPlanner
         var segmentsToReingest = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var skippedFiles = new List<PlannedFileSkip>();
 
+        // Phase 1: file-system I/O only — no DB calls.
+        var archivePaths = new List<string>();
+        var fileMetas = new List<FileMetaEntry>();
+
         foreach (var expandedPath in ExpandInputPaths(filePaths, skippedFiles)) {
             ct.ThrowIfCancellationRequested();
 
             if (SourcePathHelper.IsArchiveFilePath(expandedPath)) {
-                filesToIngest.Add(SourcePathHelper.Normalize(expandedPath));
+                archivePaths.Add(SourcePathHelper.Normalize(expandedPath));
                 continue;
             }
 
@@ -73,13 +79,30 @@ public sealed class FileIngestPlanner
             }
 
             var physicalFileId = IdentityGenerator.PhysicalFileId(path, sourceSizeBytes, lastModifiedUtc);
+            fileMetas.Add(new FileMetaEntry(path, physicalFileId, lastModifiedUtc));
+        }
 
-            var exactMatch = await FindExactPhysicalMatchAsync(physicalFileId, ct);
-            if (exactMatch is not null) {
+        // Archive paths always go to ingest directly.
+        foreach (var ap in archivePaths)
+            filesToIngest.Add(ap);
+
+        if (fileMetas.Count == 0)
+            return new FileIngestPlan(filesToIngest.ToArray(), segmentsToReingest.ToArray(), skippedFiles);
+
+        // Phase 2: single batch DB query for all files.
+        var physicalIds = fileMetas.ConvertAll(static f => f.PhysicalFileId);
+        var sourcePaths = fileMetas.ConvertAll(static f => f.Path);
+        var (byPhysId, bySrcPath) = await FetchMatchingSegmentsBatchAsync(physicalIds, sourcePaths, ct);
+
+        // Phase 3: apply skip/reingest decisions in memory.
+        foreach (var meta in fileMetas) {
+            ct.ThrowIfCancellationRequested();
+
+            if (byPhysId.TryGetValue(meta.PhysicalFileId, out var exactMatch)) {
                 ApplyExistingFileAction(
                     existingFileAction,
-                    path,
-                    exactMatch.Value.SegmentId,
+                    meta.Path,
+                    exactMatch.SegmentId,
                     "File already ingested with same fingerprint",
                     filesToIngest,
                     segmentsToReingest,
@@ -87,15 +110,14 @@ public sealed class FileIngestPlanner
                 continue;
             }
 
-            var sourcePathMatch = await FindSourcePathMatchAsync(path, ct);
-            if (sourcePathMatch is not null) {
-                var existingLastModifiedUtc = sourcePathMatch.Value.LastModifiedUtc;
-                var modified = existingLastModifiedUtc is null || existingLastModifiedUtc.Value != lastModifiedUtc;
+            if (bySrcPath.TryGetValue(meta.Path, out var sourceMatch)) {
+                var modified = sourceMatch.LastModifiedUtc is null
+                    || sourceMatch.LastModifiedUtc.Value != meta.LastModifiedUtc;
                 if (modified) {
                     ApplyExistingFileAction(
                         existingFileAction,
-                        path,
-                        sourcePathMatch.Value.SegmentId,
+                        meta.Path,
+                        sourceMatch.SegmentId,
                         "File path exists but contents changed since previous ingest",
                         filesToIngest,
                         segmentsToReingest,
@@ -104,7 +126,7 @@ public sealed class FileIngestPlanner
                 }
             }
 
-            filesToIngest.Add(path);
+            filesToIngest.Add(meta.Path);
         }
 
         return new FileIngestPlan(
@@ -182,49 +204,67 @@ public sealed class FileIngestPlanner
         }
     }
 
-    private async Task<(string SegmentId, DateTimeOffset? LastModifiedUtc)?> FindExactPhysicalMatchAsync(
-        string physicalFileId,
-        CancellationToken ct)
+    private async Task<(
+        Dictionary<string, (string SegmentId, DateTimeOffset? LastModifiedUtc)> ByPhysicalId,
+        Dictionary<string, (string SegmentId, DateTimeOffset? LastModifiedUtc)> BySourcePath)>
+        FetchMatchingSegmentsBatchAsync(
+            IReadOnlyList<string> physicalFileIds,
+            IReadOnlyList<string> sourcePaths,
+            CancellationToken ct)
     {
+        var byPhysicalId = new Dictionary<string, (string, DateTimeOffset?)>(StringComparer.OrdinalIgnoreCase);
+        var bySourcePath = new Dictionary<string, (string, DateTimeOffset?)>(StringComparer.OrdinalIgnoreCase);
+
+        var sb = new StringBuilder(256);
+        sb.Append("SELECT segment_id, physical_file_id, source_path, last_modified_utc FROM segments WHERE active = TRUE AND (");
+
         using var cmd = _connection.CreateCommand();
-        cmd.CommandText = """
-            SELECT segment_id, last_modified_utc
-            FROM segments
-            WHERE physical_file_id = $1 AND active = TRUE
-            ORDER BY last_modified_utc DESC NULLS LAST
-            LIMIT 1
-            """;
-        cmd.Parameters.Add(new DuckDBParameter { Value = physicalFileId });
+        var paramIdx = 1;
+
+        if (physicalFileIds.Count > 0) {
+            sb.Append("physical_file_id IN (");
+            for (var i = 0; i < physicalFileIds.Count; i++) {
+                if (i > 0) sb.Append(", ");
+                sb.Append('$').Append(paramIdx++);
+                cmd.Parameters.Add(new DuckDBParameter { Value = physicalFileIds[i] });
+            }
+            sb.Append(')');
+        }
+
+        if (sourcePaths.Count > 0) {
+            if (physicalFileIds.Count > 0) sb.Append(" OR ");
+            sb.Append("source_path IN (");
+            for (var i = 0; i < sourcePaths.Count; i++) {
+                if (i > 0) sb.Append(", ");
+                sb.Append('$').Append(paramIdx++);
+                cmd.Parameters.Add(new DuckDBParameter { Value = sourcePaths[i] });
+            }
+            sb.Append(')');
+        }
+
+        // ORDER BY DESC so that TryAdd retains the most recent row per key (matches original LIMIT 1 behaviour).
+        sb.Append(") ORDER BY last_modified_utc DESC NULLS LAST");
+        cmd.CommandText = sb.ToString();
 
         using var reader = await cmd.ExecuteReaderAsync(ct);
-        if (!await reader.ReadAsync(ct))
-            return null;
+        while (await reader.ReadAsync(ct)) {
+            var segmentId = reader.GetString(0);
+            var physId = reader.GetString(1);
+            var srcPath = reader.GetString(2);
+            var lastMod = reader.IsDBNull(3)
+                ? null
+                : (DateTimeOffset?)new DateTimeOffset(reader.GetDateTime(3), TimeSpan.Zero);
 
-        return (
-            SegmentId: reader.GetString(0),
-            LastModifiedUtc: reader.IsDBNull(1) ? null : new DateTimeOffset(reader.GetDateTime(1), TimeSpan.Zero));
+            byPhysicalId.TryAdd(physId, (segmentId, lastMod));
+            bySourcePath.TryAdd(srcPath, (segmentId, lastMod));
+        }
+
+        return (byPhysicalId, bySourcePath);
     }
 
-    private async Task<(string SegmentId, DateTimeOffset? LastModifiedUtc)?> FindSourcePathMatchAsync(
-        string sourcePath,
-        CancellationToken ct)
-    {
-        using var cmd = _connection.CreateCommand();
-        cmd.CommandText = """
-            SELECT segment_id, last_modified_utc
-            FROM segments
-            WHERE source_path = $1 AND active = TRUE
-            ORDER BY last_modified_utc DESC NULLS LAST
-            LIMIT 1
-            """;
-        cmd.Parameters.Add(new DuckDBParameter { Value = sourcePath });
-
-        using var reader = await cmd.ExecuteReaderAsync(ct);
-        if (!await reader.ReadAsync(ct))
-            return null;
-
-        return (
-            SegmentId: reader.GetString(0),
-            LastModifiedUtc: reader.IsDBNull(1) ? null : new DateTimeOffset(reader.GetDateTime(1), TimeSpan.Zero));
-    }
+    private readonly record struct FileMetaEntry(
+        string Path,
+        string PhysicalFileId,
+        DateTimeOffset LastModifiedUtc);
 }
+

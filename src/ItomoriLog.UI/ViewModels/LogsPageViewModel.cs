@@ -214,6 +214,22 @@ public class LogsPageViewModel : ViewModelBase
         await RefreshAsync(preserveLoadedRowCount);
     }
 
+    /// <summary>
+    /// Sets the time filter without triggering the reactive auto-refresh pipeline.
+    /// Call this before an explicit <see cref="RefreshResultsAsync"/> to avoid a
+    /// redundant second refresh caused by the 300 ms <c>WhenAnyValue</c> throttle.
+    /// </summary>
+    public void SetTimeFilter(DateTimeOffset? startUtc, DateTimeOffset? endUtc)
+    {
+        _suppressAutoRefresh = true;
+        try {
+            StartUtc = startUtc;
+            EndUtc = endUtc;
+        } finally {
+            _suppressAutoRefresh = false;
+        }
+    }
+
     public async Task ResetFiltersAndRefreshAsync(bool invalidateCache = false)
     {
         _suppressAutoRefresh = true;

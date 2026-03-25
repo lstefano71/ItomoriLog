@@ -601,7 +601,8 @@ public class SessionShellViewModel : ViewModelBase
             var overrides = BuildDetectionOverrides(plan.FilesToIngest);
             var progress = new Progress<IngestProgressUpdate>(OnIngestProgress);
             var visibility = new Progress<IngestVisibilityUpdate>(OnIngestVisibilityCommitted);
-            var orchestrator = new IngestOrchestrator(conn, formatOverrides: overrides);
+            var orchestrator = new IngestOrchestrator(conn, formatOverrides: overrides,
+                maxConcurrency: Math.Max(2, Environment.ProcessorCount / 2));
             _ingestBaselineRecordCount = RecordCount;
             var result = await orchestrator.IngestFilesAsync(plan.FilesToIngest, defaultTz, progress, visibility);
 
@@ -1630,8 +1631,7 @@ public class SessionShellViewModel : ViewModelBase
             await Timeline.LoadCoarseBinsAsync();
         } else {
             await Timeline.RefreshDataAsync(preserveViewport: true);
-            LogsPage.StartUtc = Timeline.SelectedStart;
-            LogsPage.EndUtc = Timeline.SelectedEnd;
+            LogsPage.SetTimeFilter(Timeline.SelectedStart, Timeline.SelectedEnd);
             FacetPanel.FilterStart = Timeline.SelectedStart;
             FacetPanel.FilterEnd = Timeline.SelectedEnd;
         }

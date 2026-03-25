@@ -3,7 +3,9 @@ using DuckDB.NET.Data;
 using ItomoriLog.Core.Ingest.Readers;
 using ItomoriLog.Core.Model;
 
+using System.Buffers;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Channels;
 
 namespace ItomoriLog.Core.Ingest;
@@ -334,6 +336,8 @@ public sealed class IngestOrchestrator
         var synthesizer = new FieldSynthesizer();
         DateTimeOffset? minTs = null;
         DateTimeOffset? maxTs = null;
+        var fieldsBuffer = new ArrayBufferWriter<byte>(512);
+        using var fieldsWriter = new Utf8JsonWriter(fieldsBuffer);
 
         while (recordReader.TryReadNext(out var raw)) {
             ct.ThrowIfCancellationRequested();
@@ -376,12 +380,22 @@ public sealed class IngestOrchestrator
                 if (msg is not null || msg2 is not null)
                     message = msg ?? msg2 ?? raw.FullText;
 
-                // Remaining fields as JSON
-                var extra = raw.Fields
-                    .Where(kv => kv.Key is not "level" and not "severity" and not "message" and not "msg")
-                    .ToDictionary(kv => kv.Key, kv => kv.Value);
-                if (extra.Count > 0)
-                    fieldsJson = System.Text.Json.JsonSerializer.Serialize(extra);
+                // Remaining fields as JSON — writer and buffer are reused per record to avoid
+                // per-record Dictionary + JsonSerializer allocations.
+                fieldsBuffer.ResetWrittenCount();
+                fieldsWriter.Reset();
+                fieldsWriter.WriteStartObject();
+                var extraCount = 0;
+                foreach (var kv in raw.Fields) {
+                    if (kv.Key is not "level" and not "severity" and not "message" and not "msg") {
+                        fieldsWriter.WriteString(kv.Key, kv.Value);
+                        extraCount++;
+                    }
+                }
+                fieldsWriter.WriteEndObject();
+                fieldsWriter.Flush();
+                if (extraCount > 0)
+                    fieldsJson = Encoding.UTF8.GetString(fieldsBuffer.WrittenSpan);
             }
 
             batch.Add(new LogRow(
@@ -416,8 +430,13 @@ public sealed class IngestOrchestrator
         if (batch.Count > 0)
             await writer.WriteAsync(batch, ct);
 
-        await using var hashStream = entry.OpenStream();
-        var fileHash = await FileChangeDetector.ComputeStreamHashAsync(hashStream, ct);
+        // Only hash files within the threshold — consistent with FileChangeDetector.DetectAsync —
+        // to avoid a full second read of large files.
+        string? fileHash = null;
+        if (totalBytes <= FileChangeDetector.HashThresholdBytes) {
+            await using var hashStream = entry.OpenStream();
+            fileHash = await FileChangeDetector.ComputeStreamHashAsync(hashStream, ct);
+        }
 
         progressReporter.Report(
             IngestFilePhase.Completed,
