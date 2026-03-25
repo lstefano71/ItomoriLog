@@ -7,4 +7,5 @@ public sealed record TimelineBin(
     DateTimeOffset Start,
     DateTimeOffset End,
     long Count,
-    string? DominantLevel);
+    string? DominantLevel,
+    long MatchedCount = 0);

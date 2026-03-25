@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Reactive.Concurrency;
 using System.Reactive;
 using FluentAssertions;
@@ -72,6 +73,40 @@ public class LogsPageViewModelTests : IDisposable
         vm.CurrentPage.Should().HaveCount(24);
         vm.CurrentPage[0].Message.Should().Be("Event #0");
         vm.StatusText.Should().Contain("Loaded 24");
+    }
+
+    [Fact]
+    public async Task ClearQueryCommand_ClearsQueryText()
+    {
+        var vm = new LogsPageViewModel(_factory, "UTC")
+        {
+            QueryText = "timeout"
+        };
+
+        await ExecuteCommandAsync(vm.ClearQueryCommand);
+
+        vm.QueryText.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void BuildCurrentTimelineMatchFilterState_OmitsSelectionWindow()
+    {
+        var start = new DateTimeOffset(2025, 6, 15, 12, 0, 0, TimeSpan.Zero);
+        var end = start.AddMinutes(5);
+        var vm = new LogsPageViewModel(_factory, "UTC")
+        {
+            QueryText = "timeout",
+            StartUtc = start,
+            EndUtc = end,
+            SelectedLevels = new ObservableCollection<string>(["ERROR"])
+        };
+
+        var filter = vm.BuildCurrentTimelineMatchFilterState();
+
+        filter.StartUtc.Should().BeNull();
+        filter.EndUtc.Should().BeNull();
+        filter.Levels.Should().ContainSingle().Which.Should().Be("ERROR");
+        filter.TextSearchQuery.Should().NotBeNull();
     }
 
     [Fact]

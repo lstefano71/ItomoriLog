@@ -442,6 +442,8 @@ public class SessionShellViewModel : ViewModelBase
             LogsPage.SelectedSources = new ObservableCollection<string>(sources);
             LogsPage.ExcludedSources = new ObservableCollection<string>(excludedSources);
         };
+
+        LogsPage.TimelineFilterChanged += filter => _ = Timeline.ApplyMatchFilterAsync(filter);
     }
 
     private async Task ResumeInterruptedIngestionAsync()

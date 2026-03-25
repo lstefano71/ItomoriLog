@@ -16,6 +16,7 @@ public class TimelineViewModel : ViewModelBase
 {
     private readonly DuckLakeConnectionFactory _factory;
     private readonly TimelineQuery _query;
+    private FilterState _matchFilter = FilterState.Empty;
 
     private TimelineBin[] _bins = [];
     private DateTimeOffset? _sessionStart;
@@ -26,6 +27,7 @@ public class TimelineViewModel : ViewModelBase
     private DateTimeOffset? _selectedEnd;
     private TimeSpan _currentBinWidth = TimeSpan.FromHours(1);
     private bool _isLoading;
+    private bool _hasActiveMatchFilter;
 
     private CancellationTokenSource? _pendingCts;
     private readonly object _ctsLock = new();
@@ -125,6 +127,12 @@ public class TimelineViewModel : ViewModelBase
     {
         get => _isLoading;
         set => this.RaiseAndSetIfChanged(ref _isLoading, value);
+    }
+
+    public bool HasActiveMatchFilter
+    {
+        get => _hasActiveMatchFilter;
+        private set => this.RaiseAndSetIfChanged(ref _hasActiveMatchFilter, value);
     }
 
     public bool HasSelection => SelectedStart.HasValue && SelectedEnd.HasValue;
@@ -268,11 +276,7 @@ public class TimelineViewModel : ViewModelBase
                 }
             }
 
-            var bins = await _query.QueryBinsAsync(
-                VisibleStart, VisibleEnd, CurrentBinWidth, ct: ct);
-
-            ct.ThrowIfCancellationRequested();
-            Bins = bins;
+            await LoadVisibleBinsAsync(ct);
         }
         catch (OperationCanceledException) { }
         finally
@@ -295,11 +299,7 @@ public class TimelineViewModel : ViewModelBase
             var visibleSpan = VisibleEnd.Value - VisibleStart.Value;
             CurrentBinWidth = TimelineQuery.ChooseFineBinWidth(visibleSpan);
 
-            var bins = await _query.QueryBinsAsync(
-                VisibleStart, VisibleEnd, CurrentBinWidth, ct: ct);
-
-            ct.ThrowIfCancellationRequested();
-            Bins = bins;
+            await LoadVisibleBinsAsync(ct);
         }
         catch (OperationCanceledException) { }
         finally
@@ -412,6 +412,27 @@ public class TimelineViewModel : ViewModelBase
         await LoadCoarseBinsAsync();
     }
 
+    public async Task ApplyMatchFilterAsync(FilterState filter)
+    {
+        _matchFilter = filter;
+        HasActiveMatchFilter = HasMatchCriteria(filter);
+
+        if (VisibleStart is null || VisibleEnd is null)
+            return;
+
+        var ct = ResetCancellation();
+        IsLoading = true;
+        try
+        {
+            await LoadVisibleBinsAsync(ct);
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
     private CancellationToken ResetCancellation()
     {
         lock (_ctsLock)
@@ -430,6 +451,28 @@ public class TimelineViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(HasSelection));
         this.RaisePropertyChanged(nameof(SelectionDisplay));
     }
+
+    private async Task LoadVisibleBinsAsync(CancellationToken ct)
+    {
+        var bins = await _query.QueryBinsAsync(
+            VisibleStart,
+            VisibleEnd,
+            CurrentBinWidth,
+            matchFilter: HasActiveMatchFilter ? _matchFilter : null,
+            ct: ct);
+
+        ct.ThrowIfCancellationRequested();
+        Bins = bins;
+    }
+
+    private static bool HasMatchCriteria(FilterState filter) =>
+        filter.SourceIds.Count > 0
+        || filter.ExcludedSourceIds.Count > 0
+        || filter.Levels.Count > 0
+        || filter.ExcludedLevels.Count > 0
+        || !string.IsNullOrWhiteSpace(filter.TextSearch)
+        || filter.TextSearchQuery is not null
+        || !string.IsNullOrWhiteSpace(filter.TickExpression);
 
     private void RaiseAxisProperties()
     {

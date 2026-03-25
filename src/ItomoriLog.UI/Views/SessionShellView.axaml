@@ -80,17 +80,23 @@
                 Background="{StaticResource Itomori.Panel}"
                 Padding="10,6"
                 IsVisible="{Binding LogsPage, Converter={x:Static ObjectConverters.IsNotNull}}">
-          <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+          <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="10">
             <TextBox Grid.Column="0"
                      Name="QueryTextBox"
                      Text="{Binding LogsPage.QueryText}"
                      Watermark="Search or query... e.g. error timeout timestamp IN '$start..$latest'"
                      FontSize="13" />
             <Button Grid.Column="1"
+                    Name="ClearQueryButton"
+                    Content="Clear"
+                    Command="{Binding LogsPage.ClearQueryCommand}"
+                    Padding="10,4"
+                    IsVisible="{Binding LogsPage.QueryText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+            <Button Grid.Column="2"
                     Content="Run query"
                     Command="{Binding LogsPage.RefreshCommand}"
                     Padding="12,4" />
-            <TextBlock Grid.Column="2"
+            <TextBlock Grid.Column="3"
                        Text="{Binding LogsPage.QueryParseError}"
                        Foreground="{StaticResource Brush.Error}"
                        VerticalAlignment="Center"

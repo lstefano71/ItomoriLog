@@ -11,10 +11,15 @@ namespace ItomoriLog.Core.Query;
 public sealed class TimelineQuery
 {
     private readonly DuckLakeConnectionFactory _factory;
+    private readonly FilterSqlBuilder _filterBuilder;
 
     public TimelineQuery(DuckLakeConnectionFactory factory)
     {
         _factory = factory;
+        _filterBuilder = new FilterSqlBuilder(
+            new TickCompiler(),
+            new TickSqlEmitter(),
+            new SearchQuerySqlEmitter());
     }
 
     /// <summary>
@@ -32,10 +37,12 @@ public sealed class TimelineQuery
         TimeSpan binWidth,
         IReadOnlyList<string>? levels = null,
         IReadOnlyList<string>? sourceIds = null,
+        FilterState? matchFilter = null,
         CancellationToken ct = default)
     {
         var parameters = new List<object>();
         var whereClauses = new List<string>();
+        string? setupSql = null;
 
         if (startUtc.HasValue)
         {
@@ -75,12 +82,28 @@ public sealed class TimelineQuery
             : "";
 
         var intervalStr = FormatInterval(binWidth);
+        var matchedCountSql = "CAST(0 AS BIGINT) AS matched_cnt";
+
+        if (matchFilter is not null)
+        {
+            var filterEmission = _filterBuilder.Build(matchFilter);
+            if (!string.IsNullOrWhiteSpace(filterEmission.WhereSql))
+            {
+                var rebasedWhere = QueryPlanner.RebaseParameterIndices(filterEmission.WhereSql, parameters.Count);
+                foreach (var parameter in filterEmission.Parameters)
+                    parameters.Add(parameter);
+
+                matchedCountSql = $"SUM(CASE WHEN {rebasedWhere} THEN 1 ELSE 0 END) AS matched_cnt";
+                setupSql = filterEmission.SetupSql;
+            }
+        }
 
         var sql = $"""
             SELECT
                 time_bucket(INTERVAL '{intervalStr}', timestamp_utc) AS bin_start,
                 COUNT(*) AS cnt,
-                mode(level) AS dominant_level
+                mode(level) AS dominant_level,
+                {matchedCountSql}
             FROM logs
             {whereClause}
             GROUP BY bin_start
@@ -88,6 +111,13 @@ public sealed class TimelineQuery
             """;
 
         var conn = await _factory.GetConnectionAsync(ct);
+        if (setupSql is not null)
+        {
+            using var setupCmd = conn.CreateCommand();
+            setupCmd.CommandText = setupSql;
+            await setupCmd.ExecuteNonQueryAsync(ct);
+        }
+
         using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
         foreach (var p in parameters)
@@ -101,12 +131,14 @@ public sealed class TimelineQuery
             var binStart = new DateTimeOffset(reader.GetDateTime(0), TimeSpan.Zero);
             var count = reader.GetInt64(1);
             var dominantLevel = reader.IsDBNull(2) ? null : reader.GetString(2);
+            var matchedCount = reader.GetInt64(3);
 
             bins.Add(new TimelineBin(
                 Start: binStart,
                 End: binStart.Add(binWidth),
                 Count: count,
-                DominantLevel: dominantLevel));
+                DominantLevel: dominantLevel,
+                MatchedCount: matchedCount));
         }
 
         return bins.ToArray();

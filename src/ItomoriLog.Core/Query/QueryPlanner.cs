@@ -8,15 +8,14 @@ namespace ItomoriLog.Core.Query;
 /// </summary>
 public sealed class QueryPlanner
 {
-    private readonly ITickCompiler _tickCompiler;
-    private readonly TickSqlEmitter _tickEmitter;
-    private readonly SearchQuerySqlEmitter _searchEmitter;
+    private readonly FilterSqlBuilder _filterBuilder;
 
     public QueryPlanner(ITickCompiler tickCompiler, TickSqlEmitter tickEmitter, SearchQuerySqlEmitter? searchEmitter = null)
     {
-        _tickCompiler = tickCompiler;
-        _tickEmitter = tickEmitter;
-        _searchEmitter = searchEmitter ?? new SearchQuerySqlEmitter();
+        _filterBuilder = new FilterSqlBuilder(
+            tickCompiler,
+            tickEmitter,
+            searchEmitter ?? new SearchQuerySqlEmitter());
     }
 
     public QueryPlanner() : this(new TickCompiler(), new TickSqlEmitter(), new SearchQuerySqlEmitter()) { }
@@ -35,99 +34,13 @@ public sealed class QueryPlanner
         int pageSize = 2000,
         TickContext? tickContext = null)
     {
-        var parameters = new List<object>();
         var whereClauses = new List<string>();
-        string? setupSql = null;
+        var filterEmission = _filterBuilder.Build(filter, tickContext);
+        var parameters = filterEmission.Parameters.ToList();
+        var setupSql = filterEmission.SetupSql;
 
-        // Time window filter
-        if (filter.StartUtc.HasValue)
-        {
-            parameters.Add(filter.StartUtc.Value.UtcDateTime);
-            whereClauses.Add($"timestamp_utc >= ${parameters.Count}");
-        }
-        if (filter.EndUtc.HasValue)
-        {
-            parameters.Add(filter.EndUtc.Value.UtcDateTime);
-            whereClauses.Add($"timestamp_utc < ${parameters.Count}");
-        }
-
-        // Source filter
-        if (filter.SourceIds is { Count: > 0 })
-        {
-            var placeholders = new List<string>();
-            foreach (var sourceId in filter.SourceIds)
-            {
-                parameters.Add(sourceId);
-                placeholders.Add($"${parameters.Count}");
-            }
-            whereClauses.Add($"logical_source_id IN ({string.Join(", ", placeholders)})");
-        }
-        if (filter.ExcludedSourceIds is { Count: > 0 })
-        {
-            var placeholders = new List<string>();
-            foreach (var sourceId in filter.ExcludedSourceIds)
-            {
-                parameters.Add(sourceId);
-                placeholders.Add($"${parameters.Count}");
-            }
-            whereClauses.Add($"logical_source_id NOT IN ({string.Join(", ", placeholders)})");
-        }
-
-        // Level filter
-        if (filter.Levels is { Count: > 0 })
-        {
-            var placeholders = new List<string>();
-            foreach (var level in filter.Levels)
-            {
-                parameters.Add(level);
-                placeholders.Add($"${parameters.Count}");
-            }
-            whereClauses.Add($"level IN ({string.Join(", ", placeholders)})");
-        }
-        if (filter.ExcludedLevels is { Count: > 0 })
-        {
-            var placeholders = new List<string>();
-            foreach (var level in filter.ExcludedLevels)
-            {
-                parameters.Add(level);
-                placeholders.Add($"${parameters.Count}");
-            }
-            whereClauses.Add($"(level IS NULL OR level NOT IN ({string.Join(", ", placeholders)}))");
-        }
-
-        // Text search (structured expression or simple ILIKE)
-        if (filter.TextSearchQuery is not null)
-        {
-            var emission = _searchEmitter.Emit(filter.TextSearchQuery, "message");
-            var rebasedWhere = RebaseParameterIndices(emission.WhereSql, parameters.Count);
-            foreach (var p in emission.Parameters)
-                parameters.Add(p);
-            whereClauses.Add(rebasedWhere);
-        }
-        else if (!string.IsNullOrWhiteSpace(filter.TextSearch))
-        {
-            parameters.Add($"%{filter.TextSearch}%");
-            whereClauses.Add($"message ILIKE ${parameters.Count}");
-        }
-
-        // TICK expression integration
-        if (!string.IsNullOrWhiteSpace(filter.TickExpression))
-        {
-            var ctx = tickContext ?? new TickContext(DateTimeOffset.UtcNow);
-            var tickResult = _tickCompiler.Compile(filter.TickExpression, ctx);
-            if (!string.IsNullOrWhiteSpace(tickResult.Warning))
-                throw new InvalidOperationException(tickResult.Warning);
-            var emission = _tickEmitter.Emit(tickResult.Intervals);
-
-            // Rebase emission parameter indices to account for existing parameters
-            var rebasedWhere = RebaseParameterIndices(emission.WhereSql, parameters.Count);
-            foreach (var p in emission.Parameters)
-                parameters.Add(p);
-
-            whereClauses.Add(rebasedWhere);
-            if (emission.SetupSql is not null)
-                setupSql = emission.SetupSql;
-        }
+        if (!string.IsNullOrWhiteSpace(filterEmission.WhereSql))
+            whereClauses.Add(filterEmission.WhereSql);
 
         // Keyset cursor
         if (cursor is not null)

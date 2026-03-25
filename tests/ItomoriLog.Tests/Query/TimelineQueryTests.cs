@@ -156,6 +156,26 @@ public class TimelineQueryTests : IDisposable
     }
 
     [Fact]
+    public async Task QueryBins_WithTextMatchFilter_ReturnsMatchedCounts()
+    {
+        var baseTs = new DateTimeOffset(2025, 6, 15, 12, 0, 0, TimeSpan.Zero);
+        await SeedRowsAsync(20, baseTs);
+
+        var query = new TimelineQuery(_factory);
+        var bins = await query.QueryBinsAsync(
+            baseTs,
+            baseTs.AddSeconds(20),
+            TimeSpan.FromSeconds(10),
+            matchFilter: new FilterState { TextSearch = "#1" });
+
+        bins.Should().HaveCount(2);
+        bins.Sum(b => b.Count).Should().Be(20);
+        bins.Sum(b => b.MatchedCount).Should().Be(11);
+        bins[0].MatchedCount.Should().Be(1);
+        bins[1].MatchedCount.Should().Be(10);
+    }
+
+    [Fact]
     public async Task QueryBins_EmptyResult_ReturnsEmptyArray()
     {
         var conn = await _factory.GetConnectionAsync();

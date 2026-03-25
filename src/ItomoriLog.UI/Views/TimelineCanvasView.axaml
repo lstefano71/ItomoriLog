@@ -78,6 +78,11 @@
             <TextBlock FontSize="10"
                        Foreground="{StaticResource Brush.SakuraPink}"
                        VerticalAlignment="Center"
+                       Text="Pink = filter matches"
+                       IsVisible="{Binding HasActiveMatchFilter}" />
+            <TextBlock FontSize="10"
+                       Foreground="{StaticResource Brush.SakuraPink}"
+                       VerticalAlignment="Center"
                        Text="{Binding SelectionDisplay}"
                        IsVisible="{Binding HasSelection}" />
           </StackPanel>

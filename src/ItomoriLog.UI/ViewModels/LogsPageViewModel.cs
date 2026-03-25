@@ -61,6 +61,9 @@ public class LogsPageViewModel : ViewModelBase
         LoadMoreCommand = NextPageCommand;
         ToggleDetailCommand = ReactiveCommand.Create(() => { IsDetailOpen = !IsDetailOpen; });
         RefreshCommand = ReactiveCommand.CreateFromTask(RefreshAsync);
+        ClearQueryCommand = ReactiveCommand.Create(
+            () => { QueryText = string.Empty; },
+            this.WhenAnyValue(x => x.QueryText, queryText => !string.IsNullOrWhiteSpace(queryText)));
 
         this.WhenAnyValue(
                 x => x.TextSearch,
@@ -188,8 +191,12 @@ public class LogsPageViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> LoadToEndCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleDetailCommand { get; }
     public ReactiveCommand<Unit, Unit> RefreshCommand { get; }
+    public ReactiveCommand<Unit, Unit> ClearQueryCommand { get; }
+
+    public event Action<FilterState>? TimelineFilterChanged;
 
     public FilterState BuildCurrentFilterState() => BuildFilter();
+    public FilterState BuildCurrentTimelineMatchFilterState() => BuildTimelineMatchFilter(BuildFilter());
 
     public void InvalidateCache()
     {
@@ -309,6 +316,7 @@ public class LogsPageViewModel : ViewModelBase
         }
 
         await RunOnMainThreadAsync(() => SelectedRow = FindMatchingRow(CurrentPage, selectedRow));
+        TimelineFilterChanged?.Invoke(BuildCurrentTimelineMatchFilterState());
     }
 
     private async Task LoadMoreAsync()
@@ -479,4 +487,11 @@ public class LogsPageViewModel : ViewModelBase
             ? new TickContext(now, _cachedSessionTimeRange.Value.Min, _cachedSessionTimeRange.Value.Max)
             : new TickContext(now);
     }
+
+    private static FilterState BuildTimelineMatchFilter(FilterState filter) =>
+        filter with
+        {
+            StartUtc = null,
+            EndUtc = null
+        };
 }

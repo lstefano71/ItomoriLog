@@ -12,6 +12,7 @@ public sealed class TimelineRenderSurface : Control
     private static readonly SolidColorBrush ErrorBrush = new(Color.Parse("#EF4444"));
     private static readonly SolidColorBrush DebugBrush = new(Color.Parse("#9CA3AF"));
     private static readonly SolidColorBrush DefaultBrush = new(Color.Parse("#D6E2F0"));
+    private static readonly SolidColorBrush MatchedBrush = new(Color.Parse("#FFFF8FC2"));
     private static readonly SolidColorBrush SelectionBrush = new(Color.Parse("#40FF6DAE"));
     private static readonly Pen SelectionPen = new(new SolidColorBrush(Color.Parse("#FFFF8FC2")), 1.5);
     private static readonly Pen GridPen = new(new SolidColorBrush(Color.Parse("#2A2F3A")), 1);
@@ -61,6 +62,13 @@ public sealed class TimelineRenderSurface : Control
                 w = 1;
 
             context.DrawRectangle(GetLevelBrush(bin.DominantLevel), null, new Rect(x, y, w, h));
+
+            if (bin.MatchedCount > 0)
+            {
+                var matchedHeight = bin.MatchedCount / (double)maxCount * canvasH;
+                var matchedY = canvasH - matchedHeight;
+                context.DrawRectangle(MatchedBrush, null, new Rect(x, matchedY, w, matchedHeight));
+            }
         }
 
         if (vm.SelectedStart.HasValue && vm.SelectedEnd.HasValue)

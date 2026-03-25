@@ -16,6 +16,8 @@ public partial class SessionShellView : UserControl
         InitializeComponent();
         AddFilesButton.Click += OnAddFilesClick;
         AddFolderButton.Click += OnAddFolderClick;
+        ClearQueryButton.Click += OnClearQueryClick;
+        QueryTextBox.KeyDown += OnQueryTextBoxKeyDown;
         AddHandler(DragDrop.DropEvent, OnDrop);
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         DragDrop.SetAllowDrop(this, true);
@@ -50,6 +52,11 @@ public partial class SessionShellView : UserControl
     private async void OnAddFolderClick(object? sender, RoutedEventArgs e)
     {
         await PickAndStageFoldersAsync();
+    }
+
+    private void OnClearQueryClick(object? sender, RoutedEventArgs e)
+    {
+        QueryTextBox.Focus();
     }
 
     private async Task PickAndStageFilesAsync()
@@ -122,6 +129,20 @@ public partial class SessionShellView : UserControl
 
         if (paths.Count > 0)
             vm.StageFilesCommand.Execute(paths).Subscribe();
+        e.Handled = true;
+    }
+
+    private void OnQueryTextBoxKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape
+            || DataContext is not SessionShellViewModel { LogsPage: { } logsPage }
+            || string.IsNullOrWhiteSpace(logsPage.QueryText))
+        {
+            return;
+        }
+
+        logsPage.ClearQueryCommand.Execute().Subscribe();
+        QueryTextBox.Focus();
         e.Handled = true;
     }
 }

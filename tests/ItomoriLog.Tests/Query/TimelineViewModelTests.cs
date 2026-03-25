@@ -71,6 +71,29 @@ public class TimelineViewModelTests : IDisposable
         vm.VisibleEnd!.Value.Should().BeAfter(initialVisibleEnd!.Value);
     }
 
+    [Fact]
+    public async Task ApplyMatchFilterAsync_PreservesViewportAndLoadsMatchedCounts()
+    {
+        var baseTs = new DateTimeOffset(2025, 6, 15, 12, 0, 0, TimeSpan.Zero);
+        await SeedRowsAsync(120, baseTs);
+
+        var vm = new TimelineViewModel(_factory);
+        await vm.LoadCoarseBinsAsync();
+
+        var visibleStart = baseTs;
+        var visibleEnd = baseTs.AddSeconds(20);
+        vm.VisibleStart = visibleStart;
+        vm.VisibleEnd = visibleEnd;
+        await vm.RefineVisibleAsync();
+
+        await vm.ApplyMatchFilterAsync(new ItomoriLog.Core.Query.FilterState { TextSearch = "#1" });
+
+        vm.HasActiveMatchFilter.Should().BeTrue();
+        vm.VisibleStart.Should().Be(visibleStart);
+        vm.VisibleEnd.Should().Be(visibleEnd);
+        vm.Bins.Sum(bin => bin.MatchedCount).Should().Be(11);
+    }
+
     private async Task SeedRowsAsync(int count, DateTimeOffset baseTs, int startIndex = 0)
     {
         var conn = await _factory.GetConnectionAsync();
