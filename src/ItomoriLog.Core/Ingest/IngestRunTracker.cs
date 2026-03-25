@@ -31,8 +31,7 @@ public sealed class IngestRunTracker
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = "INSERT INTO ingest_run_sources (run_id, source_path, source_order) VALUES ($1, $2, $3)";
 
-        for (var i = 0; i < sourcePaths.Count; i++)
-        {
+        for (var i = 0; i < sourcePaths.Count; i++) {
             ct.ThrowIfCancellationRequested();
             cmd.Parameters.Clear();
             cmd.Parameters.Add(new DuckDBParameter { Value = runId });

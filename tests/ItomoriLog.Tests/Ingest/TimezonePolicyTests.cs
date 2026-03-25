@@ -1,4 +1,5 @@
 using FluentAssertions;
+
 using ItomoriLog.Core.Ingest;
 using ItomoriLog.Core.Model;
 

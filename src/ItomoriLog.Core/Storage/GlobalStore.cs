@@ -1,7 +1,8 @@
+using DuckDB.NET.Data;
+
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using DuckDB.NET.Data;
 
 namespace ItomoriLog.Core.Storage;
 
@@ -110,8 +111,7 @@ public sealed class GlobalStore : IDisposable
 
         using var reader = await cmd.ExecuteReaderAsync(ct);
         var results = new List<RecentSessionEntry>();
-        while (await reader.ReadAsync(ct))
-        {
+        while (await reader.ReadAsync(ct)) {
             results.Add(new RecentSessionEntry(
                 SessionFolder: reader.GetString(0),
                 Title: reader.GetString(1),
@@ -130,8 +130,7 @@ public sealed class GlobalStore : IDisposable
         if (dead.Count == 0) return 0;
 
         var conn = await GetConnectionAsync(ct);
-        foreach (var d in dead)
-        {
+        foreach (var d in dead) {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "DELETE FROM recent_sessions WHERE session_folder = $1";
             cmd.Parameters.Add(new DuckDBParameter { Value = d.SessionFolder });
@@ -207,20 +206,16 @@ public sealed class GlobalStore : IDisposable
                 LIMIT $3
                 """;
         cmd.Parameters.Add(new DuckDBParameter { Value = templateKey });
-        if (ruleType is null)
-        {
+        if (ruleType is null) {
             cmd.Parameters.Add(new DuckDBParameter { Value = limit });
-        }
-        else
-        {
+        } else {
             cmd.Parameters.Add(new DuckDBParameter { Value = ruleType });
             cmd.Parameters.Add(new DuckDBParameter { Value = limit });
         }
 
         using var reader = await cmd.ExecuteReaderAsync(ct);
         var results = new List<FeedbackRuleEntry>();
-        while (await reader.ReadAsync(ct))
-        {
+        while (await reader.ReadAsync(ct)) {
             var configJson = reader.GetString(3);
             var config = JsonSerializer.Deserialize<FeedbackRuleConfig>(configJson)
                 ?? throw new InvalidOperationException("Feedback rule config could not be deserialized.");
@@ -265,8 +260,7 @@ public sealed class GlobalStore : IDisposable
 
         using var reader = await cmd.ExecuteReaderAsync(ct);
         var results = new List<GlobalQueryHistoryEntry>();
-        while (await reader.ReadAsync(ct))
-        {
+        while (await reader.ReadAsync(ct)) {
             results.Add(new GlobalQueryHistoryEntry(
                 Id: reader.GetInt32(0),
                 QueryText: reader.GetString(1),
@@ -287,8 +281,7 @@ public sealed class GlobalStore : IDisposable
 
         using var reader = await cmd.ExecuteReaderAsync(ct);
         var results = new List<GlobalQueryHistoryEntry>();
-        while (await reader.ReadAsync(ct))
-        {
+        while (await reader.ReadAsync(ct)) {
             results.Add(new GlobalQueryHistoryEntry(
                 Id: reader.GetInt32(0),
                 QueryText: reader.GetString(1),

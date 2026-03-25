@@ -1,8 +1,9 @@
 using FluentAssertions;
+
+using ItomoriLog.Core.Ingest;
 using ItomoriLog.Core.Model;
 using ItomoriLog.Core.Query;
 using ItomoriLog.Core.Storage;
-using ItomoriLog.Core.Ingest;
 
 namespace ItomoriLog.Tests.Query;
 
@@ -28,8 +29,7 @@ public class FacetQueryTests : IDisposable
         var inserter = new LogBatchInserter(conn);
         var rows = new List<LogRow>();
 
-        for (int i = 0; i < count; i++)
-        {
+        for (int i = 0; i < count; i++) {
             rows.Add(new LogRow(
                 TimestampUtc: baseTs.AddSeconds(i),
                 TimestampBasis: TimeBasis.Utc,
@@ -41,8 +41,7 @@ public class FacetQueryTests : IDisposable
                 SegmentId: $"seg-{i % 2}",
                 IngestRunId: "run-1",
                 RecordIndex: i,
-                Level: (i % 4) switch
-                {
+                Level: (i % 4) switch {
                     0 => "ERROR",
                     1 => "WARN",
                     2 => "INFO",

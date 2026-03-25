@@ -1,5 +1,7 @@
 using DuckDB.NET.Data;
+
 using FluentAssertions;
+
 using ItomoriLog.Core.Ingest;
 using ItomoriLog.Core.Model;
 using ItomoriLog.Core.Query;
@@ -52,8 +54,7 @@ public class SkipsQueryTests : IDisposable
         cmd.Parameters.Add(new DuckDBParameter { Value = (object?)startOffset ?? DBNull.Value });
         cmd.Parameters.Add(new DuckDBParameter { Value = (object?)endOffset ?? DBNull.Value });
         cmd.Parameters.Add(new DuckDBParameter { Value = reasonCode.ToString() });
-        cmd.Parameters.Add(new DuckDBParameter
-        {
+        cmd.Parameters.Add(new DuckDBParameter {
             Value = samplePrefix is not null
                 ? System.Text.Encoding.UTF8.GetBytes(samplePrefix)
                 : DBNull.Value

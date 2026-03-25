@@ -1,11 +1,11 @@
-using System.Linq;
-using System.Reactive.Linq;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
-using ReactiveUI;
+
 using ItomoriLog.UI.ViewModels;
+
+using System.Reactive.Linq;
 
 namespace ItomoriLog.UI.Views;
 
@@ -25,8 +25,7 @@ public partial class LogGridView : UserControl
     private void OnAttachedToVisualTree(object? sender, System.EventArgs e)
     {
         _dataGrid = this.FindControl<DataGrid>("LogDataGrid");
-        if (_dataGrid is not null)
-        {
+        if (_dataGrid is not null) {
             _dataGrid.LayoutUpdated += OnDataGridLayoutUpdated;
             _dataGrid.SelectionChanged += OnDataGridSelectionChanged;
             _dataGrid.PointerReleased += OnDataGridPointerReleased;
@@ -38,8 +37,7 @@ public partial class LogGridView : UserControl
 
     private void OnDetachedFromVisualTree(object? sender, System.EventArgs e)
     {
-        if (_dataGrid is not null)
-        {
+        if (_dataGrid is not null) {
             _dataGrid.LayoutUpdated -= OnDataGridLayoutUpdated;
             _dataGrid.SelectionChanged -= OnDataGridSelectionChanged;
             _dataGrid.PointerReleased -= OnDataGridPointerReleased;
@@ -102,8 +100,7 @@ public partial class LogGridView : UserControl
         if (DataContext is not LogsPageViewModel vm)
             return;
 
-        if (e.Key == Key.End && e.KeyModifiers.HasFlag(KeyModifiers.Control))
-        {
+        if (e.Key == Key.End && e.KeyModifiers.HasFlag(KeyModifiers.Control)) {
             if (vm.HasNextPage && !vm.IsLoading)
                 vm.LoadToEndCommand.Execute().Subscribe();
 

@@ -1,7 +1,9 @@
+using DuckDB.NET.Data;
+
 using FluentAssertions;
+
 using ItomoriLog.Core.Ingest;
 using ItomoriLog.Core.Storage;
-using DuckDB.NET.Data;
 
 namespace ItomoriLog.Tests.Ingest;
 

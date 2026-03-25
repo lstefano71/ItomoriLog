@@ -30,8 +30,7 @@ public sealed class SearchQueryParser
         if (tickMatches.Count > 1)
             return new SearchQueryParseResult(null, null, "Only one timestamp IN 'TICK' clause is supported.");
 
-        if (tickMatches.Count == 1)
-        {
+        if (tickMatches.Count == 1) {
             var match = tickMatches[0];
             var quote = match.Groups["quote"].Value[0];
             tickExpression = UnescapeQuoted(match.Groups["tick"].Value, quote);
@@ -57,8 +56,7 @@ public sealed class SearchQueryParser
     private static string NormalizeResidualQuery(string text)
     {
         var normalized = Regex.Replace(text, @"\s+", " ").Trim();
-        while (true)
-        {
+        while (true) {
             var previous = normalized;
             normalized = Regex.Replace(normalized, @"^(AND|OR)\s+", "", RegexOptions.IgnoreCase).Trim();
             normalized = Regex.Replace(normalized, @"\s+(AND|OR)$", "", RegexOptions.IgnoreCase).Trim();
@@ -96,41 +94,34 @@ public sealed class SearchQueryParser
             var tokens = new List<Token>();
             var i = 0;
 
-            while (i < input.Length)
-            {
+            while (i < input.Length) {
                 var c = input[i];
-                if (char.IsWhiteSpace(c))
-                {
+                if (char.IsWhiteSpace(c)) {
                     i++;
                     continue;
                 }
 
-                if (c == '(')
-                {
+                if (c == '(') {
                     tokens.Add(new Token(TokenKind.LParen, "("));
                     i++;
                     continue;
                 }
 
-                if (c == ')')
-                {
+                if (c == ')') {
                     tokens.Add(new Token(TokenKind.RParen, ")"));
                     i++;
                     continue;
                 }
 
-                if (c == '"' || c == '\'')
-                {
+                if (c == '"' || c == '\'') {
                     var quote = c;
                     i++;
                     var start = i;
                     var escaped = false;
                     var sb = new System.Text.StringBuilder();
-                    while (i < input.Length)
-                    {
+                    while (i < input.Length) {
                         var ch = input[i];
-                        if (!escaped && ch == '\\')
-                        {
+                        if (!escaped && ch == '\\') {
                             escaped = true;
                             i++;
                             continue;
@@ -193,8 +184,7 @@ public sealed class SearchQueryParser
             if (node is null)
                 return null;
 
-            if (_pos < _tokens.Count)
-            {
+            if (_pos < _tokens.Count) {
                 Error = $"Unexpected token '{_tokens[_pos].Text}'.";
                 return null;
             }
@@ -208,12 +198,10 @@ public sealed class SearchQueryParser
             if (left is null)
                 return null;
 
-            while (PeekKind() == TokenKind.Or)
-            {
+            while (PeekKind() == TokenKind.Or) {
                 _pos++; // consume OR
                 var right = ParseAnd();
-                if (right is null)
-                {
+                if (right is null) {
                     Error ??= "Expected term or '(' after OR.";
                     return null;
                 }
@@ -229,22 +217,17 @@ public sealed class SearchQueryParser
             if (left is null)
                 return null;
 
-            while (true)
-            {
+            while (true) {
                 var explicitAnd = false;
-                if (PeekKind() == TokenKind.And)
-                {
+                if (PeekKind() == TokenKind.And) {
                     explicitAnd = true;
                     _pos++; // consume AND
-                }
-                else if (!CanStartPrimary(PeekKind()))
-                {
+                } else if (!CanStartPrimary(PeekKind())) {
                     break;
                 }
 
                 var right = ParsePrimary();
-                if (right is null)
-                {
+                if (right is null) {
                     Error ??= explicitAnd
                         ? "Expected term or '(' after AND."
                         : "Expected term or '(' after implicit AND.";
@@ -259,21 +242,18 @@ public sealed class SearchQueryParser
         private MessageQueryNode? ParsePrimary()
         {
             var kind = PeekKind();
-            if (kind is null)
-            {
+            if (kind is null) {
                 Error ??= "Unexpected end of query.";
                 return null;
             }
 
-            if (kind == TokenKind.LParen)
-            {
+            if (kind == TokenKind.LParen) {
                 _pos++; // consume '('
                 var inner = ParseOr();
                 if (inner is null)
                     return null;
 
-                if (PeekKind() != TokenKind.RParen)
-                {
+                if (PeekKind() != TokenKind.RParen) {
                     Error ??= "Missing closing ')'.";
                     return null;
                 }
@@ -282,8 +262,7 @@ public sealed class SearchQueryParser
                 return inner;
             }
 
-            if (kind == TokenKind.Term)
-            {
+            if (kind == TokenKind.Term) {
                 var token = _tokens[_pos++];
                 return new MessageTermNode(token.Text);
             }
@@ -310,8 +289,7 @@ public sealed class SearchQuerySqlEmitter
 
     private static string EmitNode(MessageQueryNode query, List<object> parameters, string messageColumn)
     {
-        return query switch
-        {
+        return query switch {
             MessageTermNode term => EmitTerm(term.Term, parameters, messageColumn),
             MessageAndNode and => $"({EmitNode(and.Left, parameters, messageColumn)} AND {EmitNode(and.Right, parameters, messageColumn)})",
             MessageOrNode or => $"({EmitNode(or.Left, parameters, messageColumn)} OR {EmitNode(or.Right, parameters, messageColumn)})",

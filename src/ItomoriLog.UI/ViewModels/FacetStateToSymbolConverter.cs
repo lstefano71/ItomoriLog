@@ -1,5 +1,6 @@
-using System.Globalization;
 using Avalonia.Data.Converters;
+
+using System.Globalization;
 
 namespace ItomoriLog.UI.ViewModels;
 
@@ -11,8 +12,7 @@ public class FacetStateToSymbolConverter : IValueConverter
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         return value is FacetSelectionState state
-            ? state switch
-            {
+            ? state switch {
                 FacetSelectionState.Include => "✓",
                 FacetSelectionState.Exclude => "✗",
                 FacetSelectionState.Ignore => "○",

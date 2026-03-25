@@ -1,5 +1,6 @@
-using System.Globalization;
 using ItomoriLog.Core.Ingest.Extractors;
+
+using System.Globalization;
 
 namespace ItomoriLog.Core.Ingest.Detectors;
 
@@ -42,8 +43,7 @@ public sealed class CsvFormatDetector : IFormatDetector
 
         var lines = new List<string>();
         string? line;
-        while ((line = reader.ReadLine()) is not null && lines.Count < MaxSniffLines)
-        {
+        while ((line = reader.ReadLine()) is not null && lines.Count < MaxSniffLines) {
             if (!string.IsNullOrWhiteSpace(line))
                 lines.Add(line);
         }
@@ -62,13 +62,10 @@ public sealed class CsvFormatDetector : IFormatDetector
         // Step 3: Parse column names
         string[]? columnNames = null;
         int dataStartIndex = 0;
-        if (hasHeader)
-        {
+        if (hasHeader) {
             columnNames = Readers.CsvRecordReader.ParseCsvLine(lines[0], bestDelimiter, bestQuote);
             dataStartIndex = 1;
-        }
-        else
-        {
+        } else {
             // Generate synthetic column names
             var firstFields = Readers.CsvRecordReader.ParseCsvLine(lines[0], bestDelimiter, bestQuote);
             columnNames = new string[firstFields.Length];
@@ -85,8 +82,7 @@ public sealed class CsvFormatDetector : IFormatDetector
         var extractor = new CompositeCsvTsExtractor(tsFields);
         int extracted = 0;
         int dataRows = 0;
-        for (int i = dataStartIndex; i < lines.Count; i++)
-        {
+        for (int i = dataStartIndex; i < lines.Count; i++) {
             var fields = Readers.CsvRecordReader.ParseCsvLine(lines[i], bestDelimiter, bestQuote);
             if (fields.Length != columnNames.Length) continue;
 
@@ -127,13 +123,10 @@ public sealed class CsvFormatDetector : IFormatDetector
         int bestModalColumns = 0;
         int bestScore = -1;
 
-        foreach (var delim in CandidateDelimiters)
-        {
-            foreach (var quote in CandidateQuotes)
-            {
+        foreach (var delim in CandidateDelimiters) {
+            foreach (var quote in CandidateQuotes) {
                 var (score, consistency, modalColumns) = ScoreDialect(lines, delim, quote);
-                if (score > bestScore)
-                {
+                if (score > bestScore) {
                     bestScore = score;
                     bestDelim = delim;
                     bestQuote = quote;
@@ -165,8 +158,7 @@ public sealed class CsvFormatDetector : IFormatDetector
         var consistencyScore = (int)Math.Round(consistency * 1000, MidpointRounding.AwayFromZero);
         var structuredFieldScore = 0;
         var maxTypedRows = Math.Min(rowCount, MaxHeaderSampleRows + 1);
-        for (var rowIndex = 0; rowIndex < maxTypedRows; rowIndex++)
-        {
+        for (var rowIndex = 0; rowIndex < maxTypedRows; rowIndex++) {
             var fields = Readers.CsvRecordReader.ParseCsvLine(lines[rowIndex], delimiter, quote);
             if (fields.Length != modalColumns)
                 continue;
@@ -206,15 +198,13 @@ public sealed class CsvFormatDetector : IFormatDetector
         var structuredHits = new int[headerFields.Length];
         var dataRowCount = 0;
         var maxRowIndex = Math.Min(lines.Count, MaxHeaderSampleRows + 1);
-        for (var rowIndex = 1; rowIndex < maxRowIndex; rowIndex++)
-        {
+        for (var rowIndex = 1; rowIndex < maxRowIndex; rowIndex++) {
             var rowFields = Readers.CsvRecordReader.ParseCsvLine(lines[rowIndex], delimiter, quote);
             if (rowFields.Length != headerFields.Length)
                 continue;
 
             dataRowCount++;
-            for (var columnIndex = 0; columnIndex < rowFields.Length; columnIndex++)
-            {
+            for (var columnIndex = 0; columnIndex < rowFields.Length; columnIndex++) {
                 if (IsStructuredType(ClassifyField(rowFields[columnIndex])))
                     structuredHits[columnIndex]++;
             }
@@ -251,8 +241,7 @@ public sealed class CsvFormatDetector : IFormatDetector
         type is FieldType.Number or FieldType.Boolean or FieldType.Date;
 
     private static string DescribeQuote(char quote) =>
-        quote switch
-        {
+        quote switch {
             '"' => "double-quote",
             '\'' => "single-quote",
             _ => quote.ToString()
@@ -264,8 +253,7 @@ public sealed class CsvFormatDetector : IFormatDetector
         string? dateCol = null;
         string? timeCol = null;
 
-        foreach (var name in columnNames)
-        {
+        foreach (var name in columnNames) {
             if (dateCol is null && DateFieldNames.Any(n => n.Equals(name, StringComparison.OrdinalIgnoreCase)))
                 dateCol = name;
             if (timeCol is null && TimeFieldNames.Any(n => n.Equals(name, StringComparison.OrdinalIgnoreCase)))
@@ -273,18 +261,15 @@ public sealed class CsvFormatDetector : IFormatDetector
         }
 
         // If we have both date and time columns, check if they form a valid composite timestamp
-        if (dateCol is not null && timeCol is not null)
-        {
+        if (dateCol is not null && timeCol is not null) {
             if (ValidateCompositeTimestamp(lines, dataStartIndex, delimiter, quote, columnNames, [dateCol, timeCol]))
                 return [dateCol, timeCol];
         }
 
         // For headerless or unfamiliar CSVs, try composite timestamp pairs before
         // falling back to a single parseable column.
-        for (var first = 0; first < columnNames.Length; first++)
-        {
-            for (var second = first + 1; second < columnNames.Length; second++)
-            {
+        for (var first = 0; first < columnNames.Length; first++) {
+            for (var second = first + 1; second < columnNames.Length; second++) {
                 var candidateFields = new[] { columnNames[first], columnNames[second] };
                 if (ValidateCompositeTimestamp(lines, dataStartIndex, delimiter, quote, columnNames, candidateFields))
                     return candidateFields;
@@ -292,8 +277,7 @@ public sealed class CsvFormatDetector : IFormatDetector
         }
 
         // Look for single timestamp column by well-known names
-        foreach (var tsName in TimestampFieldNames)
-        {
+        foreach (var tsName in TimestampFieldNames) {
             int colIdx = Array.FindIndex(columnNames, c => c.Equals(tsName, StringComparison.OrdinalIgnoreCase));
             if (colIdx < 0) continue;
 
@@ -303,8 +287,7 @@ public sealed class CsvFormatDetector : IFormatDetector
         }
 
         // Brute force: try each column
-        for (int col = 0; col < columnNames.Length; col++)
-        {
+        for (int col = 0; col < columnNames.Length; col++) {
             if (ValidateCompositeTimestamp(lines, dataStartIndex, delimiter, quote, columnNames, [columnNames[col]]))
                 return [columnNames[col]];
         }
@@ -319,8 +302,7 @@ public sealed class CsvFormatDetector : IFormatDetector
         int attempts = 0;
         int maxCheck = Math.Min(lines.Count, dataStartIndex + 10);
 
-        for (int i = dataStartIndex; i < maxCheck; i++)
-        {
+        for (int i = dataStartIndex; i < maxCheck; i++) {
             var fields = Readers.CsvRecordReader.ParseCsvLine(lines[i], delimiter, quote);
             if (fields.Length != columnNames.Length) continue;
 

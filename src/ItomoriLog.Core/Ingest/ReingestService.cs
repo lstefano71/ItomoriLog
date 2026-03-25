@@ -1,7 +1,7 @@
 using DuckDB.NET.Data;
+
 using ItomoriLog.Core.Ingest.Readers;
 using ItomoriLog.Core.Model;
-using ItomoriLog.Core.Storage;
 
 namespace ItomoriLog.Core.Ingest;
 
@@ -42,8 +42,7 @@ public sealed class ReingestService
         DateTimeOffset sourceLastModifiedUtc;
         string sourceName;
 
-        if (SourcePathHelper.TrySplitArchiveEntry(canonicalSourcePath, out var archivePath, out var entryFullName))
-        {
+        if (SourcePathHelper.TrySplitArchiveEntry(canonicalSourcePath, out var archivePath, out var entryFullName)) {
             if (!File.Exists(archivePath))
                 return ReingestResult.Failed(segmentId, $"Source archive not found: {archivePath}");
 
@@ -54,9 +53,7 @@ public sealed class ReingestService
             sourceSizeBytes = zipEntry.SizeBytes;
             sourceLastModifiedUtc = new DateTimeOffset(File.GetLastWriteTimeUtc(archivePath), TimeSpan.Zero);
             sourceName = Path.GetFileName(zipEntry.EntryName);
-        }
-        else
-        {
+        } else {
             if (!File.Exists(canonicalSourcePath))
                 return ReingestResult.Failed(segmentId, $"Source file not found: {canonicalSourcePath}");
 
@@ -72,8 +69,7 @@ public sealed class ReingestService
 
         // 3. Re-detect format from source file
         var detection = formatOverride?.Detection;
-        if (detection is null)
-        {
+        if (detection is null) {
             using var detectionStream = new MemoryStream(sampleBytes, writable: false);
             var engineResult = _detectionEngine.Detect(detectionStream, sourceName);
             if (engineResult.Detection is null)
@@ -99,12 +95,10 @@ public sealed class ReingestService
 
         var effectiveTimeBasis = formatOverride?.TimeBasisOverride ?? defaultTimeBasis;
 
-        while (recordReader.TryReadNext(out var raw))
-        {
+        while (recordReader.TryReadNext(out var raw)) {
             ct.ThrowIfCancellationRequested();
 
-            if (!TimestampResolver.TryResolve(detection.Extractor, raw, effectiveTimeBasis, out var resolvedTimestamp))
-            {
+            if (!TimestampResolver.TryResolve(detection.Extractor, raw, effectiveTimeBasis, out var resolvedTimestamp)) {
                 var seg = skipLogger.BeginSkip(SkipReasonCode.TimeParse,
                     "Timestamp extraction failed", startLine: raw.LineNumber);
                 seg.Close(endLine: raw.LineNumber);
@@ -118,20 +112,16 @@ public sealed class ReingestService
             string message = raw.FullText;
             string? fieldsJson = null;
 
-            if (detection.Boundary is TextSoRBoundary sor)
-            {
+            if (detection.Boundary is TextSoRBoundary sor) {
                 var tsMatch = sor.StartRegex.Match(raw.FirstLine);
-                if (tsMatch.Success)
-                {
+                if (tsMatch.Success) {
                     var postTs = raw.FirstLine[(tsMatch.Index + tsMatch.Length)..];
                     var extracted = synthesizer.Extract(postTs);
                     level = extracted.Level;
                     message = extracted.Message;
                     fieldsJson = extracted.FieldsJson;
                 }
-            }
-            else if (raw.Fields is not null)
-            {
+            } else if (raw.Fields is not null) {
                 raw.Fields.TryGetValue("level", out var lvl);
                 raw.Fields.TryGetValue("severity", out var sev);
                 level = lvl ?? sev;
@@ -166,8 +156,7 @@ public sealed class ReingestService
         }
 
         // 5. Transactional replace: BEGIN → DELETE → INSERT → UPDATE segment → COMMIT
-        try
-        {
+        try {
             await ExecuteAsync("BEGIN TRANSACTION", ct);
 
             await DeleteSegmentLogsAsync(segmentId, ct);
@@ -205,9 +194,7 @@ public sealed class ReingestService
                 NewRowCount: rows.Count,
                 Skips: skipSink.GetSkips(),
                 Error: null);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
             try { await ExecuteAsync("ROLLBACK", ct); } catch { }
             try { await tracker.CompleteRunAsync(runId, ct); } catch { }
             return ReingestResult.Failed(segmentId, $"Transaction failed: {ex.Message}");
@@ -320,8 +307,7 @@ public sealed class ReingestService
     private static IRecordReader CreateReader(
         RecordBoundarySpec boundary, TextReader textReader, SkipLogger skipLogger)
     {
-        return boundary switch
-        {
+        return boundary switch {
             TextSoRBoundary sor => new TextRecordReader(textReader, sor.StartRegex),
             CsvBoundary csv => new CsvRecordReader(textReader, csv, skipLogger),
             JsonNdBoundary json => new NdjsonRecordReader(textReader, json, skipLogger),

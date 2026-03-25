@@ -31,26 +31,20 @@ public sealed class FieldSynthesizer
         string? message = null;
 
         var regex = _fieldRegex;
-        if (regex is null)
-        {
-            foreach (var pattern in CommonPatterns)
-            {
+        if (regex is null) {
+            foreach (var pattern in CommonPatterns) {
                 var m = pattern.Match(postTimestampText);
-                if (m.Success)
-                {
+                if (m.Success) {
                     regex = pattern;
                     break;
                 }
             }
         }
 
-        if (regex is not null)
-        {
+        if (regex is not null) {
             var match = regex.Match(postTimestampText);
-            if (match.Success)
-            {
-                foreach (var groupName in regex.GetGroupNames())
-                {
+            if (match.Success) {
+                foreach (var groupName in regex.GetGroupNames()) {
                     if (groupName == "0") continue;
                     var group = match.Groups[groupName];
                     if (!group.Success) continue;
@@ -58,8 +52,7 @@ public sealed class FieldSynthesizer
                     var value = group.Value.Trim();
                     if (string.IsNullOrEmpty(value)) continue;
 
-                    switch (groupName)
-                    {
+                    switch (groupName) {
                         case "level":
                             level = NormalizeLevel(value);
                             break;
@@ -85,8 +78,7 @@ public sealed class FieldSynthesizer
 
     public static string NormalizeLevel(string raw)
     {
-        return raw.ToUpperInvariant() switch
-        {
+        return raw.ToUpperInvariant() switch {
             "TRACE" or "TRC" or "VERBOSE" or "VRB" => "TRACE",
             "DEBUG" or "DBG" or "FINE" => "DEBUG",
             "INFO" or "INF" or "INFORMATION" => "INFO",

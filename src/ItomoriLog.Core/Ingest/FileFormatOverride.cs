@@ -1,5 +1,6 @@
-using System.Text;
 using ItomoriLog.Core.Model;
+
+using System.Text;
 
 namespace ItomoriLog.Core.Ingest;
 

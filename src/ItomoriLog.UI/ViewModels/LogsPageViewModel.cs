@@ -1,13 +1,15 @@
-using System.Collections.ObjectModel;
-using System.Globalization;
-using System.Reactive.Concurrency;
-using System.Reactive;
-using System.Reactive.Disposables;
-using System.Reactive.Linq;
-using ReactiveUI;
 using ItomoriLog.Core.Model;
 using ItomoriLog.Core.Query;
 using ItomoriLog.Core.Storage;
+
+using ReactiveUI;
+
+using System.Collections.ObjectModel;
+using System.Globalization;
+using System.Reactive;
+using System.Reactive.Concurrency;
+using System.Reactive.Disposables;
+using System.Reactive.Linq;
 
 namespace ItomoriLog.UI.ViewModels;
 
@@ -81,106 +83,89 @@ public class LogsPageViewModel : ViewModelBase
             .InvokeCommand(RefreshCommand);
     }
 
-    public string QueryText
-    {
+    public string QueryText {
         get => _queryText;
         set => this.RaiseAndSetIfChanged(ref _queryText, value);
     }
 
-    public string? TextSearch
-    {
+    public string? TextSearch {
         get => _textSearch;
         set => this.RaiseAndSetIfChanged(ref _textSearch, value);
     }
 
-    public string? QueryParseError
-    {
+    public string? QueryParseError {
         get => _queryParseError;
         private set => this.RaiseAndSetIfChanged(ref _queryParseError, value);
     }
 
-    public ObservableCollection<string> SelectedSources
-    {
+    public ObservableCollection<string> SelectedSources {
         get => _selectedSources;
         set => this.RaiseAndSetIfChanged(ref _selectedSources, value);
     }
 
-    public ObservableCollection<string> ExcludedSources
-    {
+    public ObservableCollection<string> ExcludedSources {
         get => _excludedSources;
         set => this.RaiseAndSetIfChanged(ref _excludedSources, value);
     }
 
-    public ObservableCollection<string> SelectedLevels
-    {
+    public ObservableCollection<string> SelectedLevels {
         get => _selectedLevels;
         set => this.RaiseAndSetIfChanged(ref _selectedLevels, value);
     }
 
-    public ObservableCollection<string> ExcludedLevels
-    {
+    public ObservableCollection<string> ExcludedLevels {
         get => _excludedLevels;
         set => this.RaiseAndSetIfChanged(ref _excludedLevels, value);
     }
 
-    public DateTimeOffset? StartUtc
-    {
+    public DateTimeOffset? StartUtc {
         get => _startUtc;
         set => this.RaiseAndSetIfChanged(ref _startUtc, value);
     }
 
-    public DateTimeOffset? EndUtc
-    {
+    public DateTimeOffset? EndUtc {
         get => _endUtc;
         set => this.RaiseAndSetIfChanged(ref _endUtc, value);
     }
 
-    public ObservableCollection<LogRowDto> CurrentPage
-    {
+    public ObservableCollection<LogRowDto> CurrentPage {
         get => _currentPage;
         set => this.RaiseAndSetIfChanged(ref _currentPage, value);
     }
 
-    public LogRowDto? SelectedRow
-    {
+    public LogRowDto? SelectedRow {
         get => _selectedRow;
         set => this.RaiseAndSetIfChanged(ref _selectedRow, value);
     }
 
-    public bool IsDetailOpen
-    {
+    public bool IsDetailOpen {
         get => _isDetailOpen;
         set => this.RaiseAndSetIfChanged(ref _isDetailOpen, value);
     }
 
-    public bool IsLoading
-    {
+    public bool IsLoading {
         get => _isLoading;
         set => this.RaiseAndSetIfChanged(ref _isLoading, value);
     }
 
-    public string StatusText
-    {
+    public string StatusText {
         get => _statusText;
         set => this.RaiseAndSetIfChanged(ref _statusText, value);
     }
 
-    public int CurrentPageIndex
-    {
+    public int CurrentPageIndex {
         get => _currentPageIndex;
         private set => this.RaiseAndSetIfChanged(ref _currentPageIndex, value);
     }
 
     private bool _hasNextPage;
-    public bool HasNextPage
-    {
+    public bool HasNextPage {
         get => _hasNextPage;
         private set => this.RaiseAndSetIfChanged(ref _hasNextPage, value);
     }
 
     private bool _hasPreviousPage;
-    public bool HasPreviousPage
-    {
+    public bool HasPreviousPage {
         get => _hasPreviousPage;
         private set => this.RaiseAndSetIfChanged(ref _hasPreviousPage, value);
     }
@@ -207,17 +192,14 @@ public class LogsPageViewModel : ViewModelBase
     public void SetDisplayTimezone(string defaultTimezone)
     {
         _defaultTimezone = defaultTimezone;
-        if (CurrentPage.Count > 0)
-        {
+        if (CurrentPage.Count > 0) {
             var projected = new ObservableCollection<LogRowDto>(CurrentPage.Select(ProjectToDtoFromCurrent));
-            if (RxApp.MainThreadScheduler == CurrentThreadScheduler.Instance)
-            {
+            if (RxApp.MainThreadScheduler == CurrentThreadScheduler.Instance) {
                 CurrentPage = projected;
                 return;
             }
 
-            RxApp.MainThreadScheduler.Schedule(Unit.Default, (_, _) =>
-            {
+            RxApp.MainThreadScheduler.Schedule(Unit.Default, (_, _) => {
                 CurrentPage = projected;
                 return Disposable.Empty;
             });
@@ -235,10 +217,8 @@ public class LogsPageViewModel : ViewModelBase
     public async Task ResetFiltersAndRefreshAsync(bool invalidateCache = false)
     {
         _suppressAutoRefresh = true;
-        try
-        {
-            await RunOnMainThreadAsync(() =>
-            {
+        try {
+            await RunOnMainThreadAsync(() => {
                 QueryText = "";
                 TextSearch = null;
                 StartUtc = null;
@@ -250,9 +230,7 @@ public class LogsPageViewModel : ViewModelBase
                 QueryParseError = null;
                 SelectedRow = null;
             });
-        }
-        finally
-        {
+        } finally {
             _suppressAutoRefresh = false;
         }
 
@@ -263,10 +241,8 @@ public class LogsPageViewModel : ViewModelBase
     {
         var parsed = _searchParser.Parse(QueryText);
         QueryParseError = parsed.Error;
-        if (parsed.Error is not null)
-        {
-            return new FilterState
-            {
+        if (parsed.Error is not null) {
+            return new FilterState {
                 StartUtc = StartUtc,
                 EndUtc = EndUtc,
                 SourceIds = SelectedSources.ToList(),
@@ -278,8 +254,7 @@ public class LogsPageViewModel : ViewModelBase
             };
         }
 
-        return new FilterState
-        {
+        return new FilterState {
             StartUtc = StartUtc,
             EndUtc = EndUtc,
             SourceIds = SelectedSources.ToList(),
@@ -303,10 +278,8 @@ public class LogsPageViewModel : ViewModelBase
         await RunOnMainThreadAsync(() => CurrentPageIndex = 0);
         await ExecuteQueryAsync(null, PageDirection.Forward, append: false);
 
-        if (preserveLoadedRowCount)
-        {
-            while (HasNextPage && CurrentPage.Count < targetRowCount)
-            {
+        if (preserveLoadedRowCount) {
+            while (HasNextPage && CurrentPage.Count < targetRowCount) {
                 if (_nextCursor is null)
                     break;
 
@@ -337,13 +310,10 @@ public class LogsPageViewModel : ViewModelBase
     private async Task ExecuteQueryAsync(PageCursor? cursor, PageDirection direction, bool append)
     {
         IsLoading = true;
-        try
-        {
+        try {
             var filter = BuildFilter();
-            if (QueryParseError is not null)
-            {
-                await RunOnMainThreadAsync(() =>
-                {
+            if (QueryParseError is not null) {
+                await RunOnMainThreadAsync(() => {
                     StatusText = $"Query parse error: {QueryParseError}";
                     CurrentPage = [];
                     _nextCursor = null;
@@ -360,15 +330,11 @@ public class LogsPageViewModel : ViewModelBase
             var result = await _pager.FetchPageAsync(filter, cursor, direction, tickContext);
 
             var dtos = result.Rows.Select(ProjectToDto).ToList();
-            await RunOnMainThreadAsync(() =>
-            {
-                if (append && CurrentPage.Count > 0)
-                {
+            await RunOnMainThreadAsync(() => {
+                if (append && CurrentPage.Count > 0) {
                     foreach (var dto in dtos)
                         CurrentPage.Add(dto);
-                }
-                else
-                {
+                } else {
                     CurrentPage = new ObservableCollection<LogRowDto>(dtos);
                     SelectedRow = null;
                 }
@@ -383,11 +349,8 @@ public class LogsPageViewModel : ViewModelBase
 
             if (_nextCursor is not null && HasNextPage)
                 _pager.PrefetchNext(filter, _nextCursor, tickContext);
-        }
-        catch (InvalidOperationException ex)
-        {
-            await RunOnMainThreadAsync(() =>
-            {
+        } catch (InvalidOperationException ex) {
+            await RunOnMainThreadAsync(() => {
                 QueryParseError = ex.Message;
                 StatusText = $"Query parse error: {ex.Message}";
                 CurrentPage = [];
@@ -395,13 +358,9 @@ public class LogsPageViewModel : ViewModelBase
                 HasNextPage = false;
                 HasPreviousPage = false;
             });
-        }
-        catch (Exception ex)
-        {
+        } catch (Exception ex) {
             await RunOnMainThreadAsync(() => StatusText = $"Query error: {ex.Message}");
-        }
-        finally
-        {
+        } finally {
             await RunOnMainThreadAsync(() => IsLoading = false);
         }
     }
@@ -409,15 +368,11 @@ public class LogsPageViewModel : ViewModelBase
     private static Task RunOnMainThreadAsync(Action action)
     {
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        RxApp.MainThreadScheduler.Schedule(Unit.Default, (_, _) =>
-        {
-            try
-            {
+        RxApp.MainThreadScheduler.Schedule(Unit.Default, (_, _) => {
+            try {
                 action();
                 tcs.SetResult();
-            }
-            catch (Exception ex)
-            {
+            } catch (Exception ex) {
                 tcs.SetException(ex);
             }
 
@@ -457,10 +412,8 @@ public class LogsPageViewModel : ViewModelBase
 
     private TimeZoneInfo GetDisplayTimeZone()
     {
-        if (!string.IsNullOrEmpty(_defaultTimezone))
-        {
-            try { return TimeZoneInfo.FindSystemTimeZoneById(_defaultTimezone); }
-            catch { }
+        if (!string.IsNullOrEmpty(_defaultTimezone)) {
+            try { return TimeZoneInfo.FindSystemTimeZoneById(_defaultTimezone); } catch { }
         }
 
         return TimeZoneInfo.Local;
@@ -489,8 +442,7 @@ public class LogsPageViewModel : ViewModelBase
     }
 
     private static FilterState BuildTimelineMatchFilter(FilterState filter) =>
-        filter with
-        {
+        filter with {
             StartUtc = null,
             EndUtc = null
         };

@@ -1,5 +1,6 @@
-using System.Globalization;
 using ItomoriLog.Core.Model;
+
+using System.Globalization;
 
 namespace ItomoriLog.Core.Ingest;
 
@@ -41,13 +42,10 @@ public static class TimestampResolver
     {
         TimestampExtraction primaryExtraction;
         if (extractor is ITimestampExtractorWithMetadata withMetadata &&
-            withMetadata.TryExtractWithMetadata(raw, out primaryExtraction))
-        {
+            withMetadata.TryExtractWithMetadata(raw, out primaryExtraction)) {
             if (TryResolveFromExtraction(primaryExtraction, config, out resolved))
                 return true;
-        }
-        else if (extractor.TryExtract(raw, out var timestamp))
-        {
+        } else if (extractor.TryExtract(raw, out var timestamp)) {
             var basis = timestamp.Offset == TimeSpan.Zero ? TimeBasis.Utc : TimeBasis.FixedOffset;
             resolved = new ResolvedTimestamp(
                 UtcTimestamp: timestamp.ToUniversalTime(),
@@ -68,24 +66,21 @@ public static class TimestampResolver
         out ResolvedTimestamp resolved)
     {
         var primary = ToCandidate(extraction, extraction.ParsedText);
-        if (primary is null)
-        {
+        if (primary is null) {
             resolved = default!;
             return false;
         }
 
         Candidate? alternate = null;
         if (!string.IsNullOrWhiteSpace(extraction.AlternateText) &&
-            TryParseCandidate(extraction.AlternateText!, out var parsedAlternate))
-        {
+            TryParseCandidate(extraction.AlternateText!, out var parsedAlternate)) {
             alternate = parsedAlternate with { RawText = extraction.AlternateText! };
         }
 
         var chosen = ChoosePreferred(primary.Value, alternate, out var otherText);
         var usedTwoDigitYear = chosen.UsedTwoDigitYear || extraction.UsedTwoDigitYear;
 
-        if (chosen.ExplicitTimestamp.HasValue)
-        {
+        if (chosen.ExplicitTimestamp.HasValue) {
             var explicitTs = chosen.ExplicitTimestamp.Value;
             resolved = new ResolvedTimestamp(
                 UtcTimestamp: explicitTs.ToUniversalTime(),
@@ -96,8 +91,7 @@ public static class TimestampResolver
             return true;
         }
 
-        if (!chosen.BareTimestamp.HasValue)
-        {
+        if (!chosen.BareTimestamp.HasValue) {
             resolved = default!;
             return false;
         }
@@ -116,8 +110,7 @@ public static class TimestampResolver
     private static (DateTimeOffset UtcTimestamp, TimeBasis Basis, int EffectiveOffsetMinutes)
         ResolveBareTimestamp(DateTime bare, TimeBasisConfig config)
     {
-        return config.Basis switch
-        {
+        return config.Basis switch {
             TimeBasis.Utc => (
                 new DateTimeOffset(DateTime.SpecifyKind(bare, DateTimeKind.Utc)),
                 TimeBasis.Utc,
@@ -162,14 +155,11 @@ public static class TimestampResolver
             adjusted = adjusted.AddHours(1);
 
         TimeSpan offset;
-        if (tz.IsAmbiguousTime(adjusted))
-        {
+        if (tz.IsAmbiguousTime(adjusted)) {
             // Use post-transition offset (typically the smaller offset in absolute timeline ordering).
             var offsets = tz.GetAmbiguousTimeOffsets(adjusted);
             offset = offsets.Min();
-        }
-        else
-        {
+        } else {
             offset = tz.GetUtcOffset(adjusted);
         }
 
@@ -179,8 +169,7 @@ public static class TimestampResolver
 
     private static Candidate? ToCandidate(TimestampExtraction extraction, string rawText)
     {
-        if (extraction.ExplicitTimestamp.HasValue)
-        {
+        if (extraction.ExplicitTimestamp.HasValue) {
             return new Candidate(
                 ExplicitTimestamp: extraction.ExplicitTimestamp,
                 BareTimestamp: null,
@@ -188,8 +177,7 @@ public static class TimestampResolver
                 UsedTwoDigitYear: extraction.UsedTwoDigitYear);
         }
 
-        if (extraction.BareTimestamp.HasValue)
-        {
+        if (extraction.BareTimestamp.HasValue) {
             return new Candidate(
                 ExplicitTimestamp: null,
                 BareTimestamp: extraction.BareTimestamp,
@@ -209,25 +197,21 @@ public static class TimestampResolver
         var alt = alternate.Value;
 
         // Prefer explicit timestamps over bare timestamps.
-        if (primary.ExplicitTimestamp.HasValue && !alt.ExplicitTimestamp.HasValue)
-        {
+        if (primary.ExplicitTimestamp.HasValue && !alt.ExplicitTimestamp.HasValue) {
             otherText = alt.RawText;
             return primary;
         }
 
-        if (!primary.ExplicitTimestamp.HasValue && alt.ExplicitTimestamp.HasValue)
-        {
+        if (!primary.ExplicitTimestamp.HasValue && alt.ExplicitTimestamp.HasValue) {
             otherText = primary.RawText;
             return alt;
         }
 
         // If both explicit, prefer the more precise text representation.
-        if (primary.ExplicitTimestamp.HasValue && alt.ExplicitTimestamp.HasValue)
-        {
+        if (primary.ExplicitTimestamp.HasValue && alt.ExplicitTimestamp.HasValue) {
             var primaryScore = PrecisionScore(primary.RawText);
             var altScore = PrecisionScore(alt.RawText);
-            if (altScore > primaryScore)
-            {
+            if (altScore > primaryScore) {
                 otherText = primary.RawText;
                 return alt;
             }
@@ -249,8 +233,7 @@ public static class TimestampResolver
             score += fractionalMatch.Groups[1].Value.Length;
 
         if (text.Contains('Z', StringComparison.OrdinalIgnoreCase) ||
-            System.Text.RegularExpressions.Regex.IsMatch(text, @"[+-]\d{2}:?\d{2}$"))
-        {
+            System.Text.RegularExpressions.Regex.IsMatch(text, @"[+-]\d{2}:?\d{2}$")) {
             score += 100;
         }
 
@@ -261,8 +244,7 @@ public static class TimestampResolver
     {
         var trimmed = text.Trim();
 
-        if (DateTimeOffset.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out var explicitTs))
-        {
+        if (DateTimeOffset.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out var explicitTs)) {
             candidate = new Candidate(explicitTs, null, trimmed, false);
             return true;
         }
@@ -272,20 +254,17 @@ public static class TimestampResolver
             BareFormats,
             CultureInfo.InvariantCulture,
             DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.NoCurrentDateDefault,
-            out var bare))
-        {
+            out var bare)) {
             candidate = new Candidate(null, bare, trimmed, false);
             return true;
         }
 
-        if (TimestampParsing.TryParseWithTwoDigitYearWindow(trimmed, out var yyBare, out var usedWindow))
-        {
+        if (TimestampParsing.TryParseWithTwoDigitYearWindow(trimmed, out var yyBare, out var usedWindow)) {
             candidate = new Candidate(null, yyBare, trimmed, usedWindow);
             return true;
         }
 
-        if (long.TryParse(trimmed, NumberStyles.None, CultureInfo.InvariantCulture, out var epoch))
-        {
+        if (long.TryParse(trimmed, NumberStyles.None, CultureInfo.InvariantCulture, out var epoch)) {
             var epochTs = trimmed.Length >= 13
                 ? DateTimeOffset.FromUnixTimeMilliseconds(epoch)
                 : DateTimeOffset.FromUnixTimeSeconds(epoch);

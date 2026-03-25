@@ -34,8 +34,7 @@ public static class TimestampParsing
             TwoDigitYearFormats,
             dtfi,
             DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.NoCurrentDateDefault,
-            out parsed))
-        {
+            out parsed)) {
             usedTwoDigitYear = true;
             return true;
         }

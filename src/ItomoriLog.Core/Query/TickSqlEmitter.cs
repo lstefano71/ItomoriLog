@@ -20,8 +20,7 @@ public sealed class TickSqlEmitter
         var clauses = new List<string>();
         var parameters = new List<object>();
 
-        foreach (var interval in intervals)
-        {
+        foreach (var interval in intervals) {
             var idx = parameters.Count;
             clauses.Add($"({col} >= ${idx + 1} AND {col} < ${idx + 2})");
             parameters.Add(interval.Start.UtcDateTime);
@@ -38,8 +37,7 @@ public sealed class TickSqlEmitter
         var setupSql = new System.Text.StringBuilder();
         setupSql.AppendLine("CREATE OR REPLACE TEMP TABLE _q_intervals (start_ts TIMESTAMP, end_ts TIMESTAMP);");
 
-        foreach (var interval in intervals)
-        {
+        foreach (var interval in intervals) {
             setupSql.AppendLine(
                 $"INSERT INTO _q_intervals VALUES ('{interval.Start.UtcDateTime:yyyy-MM-dd HH:mm:ss.ffffff}', '{interval.ExclusiveEnd.UtcDateTime:yyyy-MM-dd HH:mm:ss.ffffff}');");
         }

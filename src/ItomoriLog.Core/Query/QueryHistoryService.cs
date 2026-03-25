@@ -60,8 +60,7 @@ public sealed class QueryHistoryService
 
         using var reader = await cmd.ExecuteReaderAsync(ct);
         var results = new List<QueryHistoryEntry>();
-        while (await reader.ReadAsync(ct))
-        {
+        while (await reader.ReadAsync(ct)) {
             results.Add(new QueryHistoryEntry(
                 Id: reader.GetInt32(0),
                 QueryText: reader.GetString(1),
@@ -83,8 +82,7 @@ public sealed class QueryHistoryService
 
         using var reader = await cmd.ExecuteReaderAsync(ct);
         var results = new List<QueryHistoryEntry>();
-        while (await reader.ReadAsync(ct))
-        {
+        while (await reader.ReadAsync(ct)) {
             results.Add(new QueryHistoryEntry(
                 Id: reader.GetInt32(0),
                 QueryText: reader.GetString(1),

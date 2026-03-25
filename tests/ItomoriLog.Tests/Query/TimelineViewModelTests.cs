@@ -1,4 +1,5 @@
 using FluentAssertions;
+
 using ItomoriLog.Core.Ingest;
 using ItomoriLog.Core.Model;
 using ItomoriLog.Core.Storage;
@@ -102,8 +103,7 @@ public class TimelineViewModelTests : IDisposable
         var inserter = new LogBatchInserter(conn);
         var rows = new List<LogRow>();
 
-        for (var i = 0; i < count; i++)
-        {
+        for (var i = 0; i < count; i++) {
             var actualIndex = startIndex + i;
             var timestamp = baseTs.AddSeconds(actualIndex);
             rows.Add(new LogRow(

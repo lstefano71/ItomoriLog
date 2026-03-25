@@ -1,10 +1,12 @@
+using DuckDB.NET.Data;
+
 using FluentAssertions;
+
 using ItomoriLog.Core.Export;
 using ItomoriLog.Core.Ingest;
 using ItomoriLog.Core.Model;
 using ItomoriLog.Core.Query;
 using ItomoriLog.Core.Storage;
-using DuckDB.NET.Data;
 
 namespace ItomoriLog.Tests.Export;
 
@@ -122,8 +124,7 @@ public class ExportServiceTests : IDisposable
         lines.Length.Should().Be(5);
 
         // Each line should be valid JSON
-        foreach (var line in lines)
-        {
+        foreach (var line in lines) {
             var doc = System.Text.Json.JsonDocument.Parse(line);
             doc.RootElement.GetProperty("message").GetString().Should().StartWith("Test message");
             doc.RootElement.GetProperty("logical_source_id").GetString().Should().NotBeNullOrEmpty();
@@ -289,8 +290,7 @@ public class ExportServiceTests : IDisposable
             """;
         using var reader = await cmd.ExecuteReaderAsync();
         var kv = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        while (await reader.ReadAsync())
-        {
+        while (await reader.ReadAsync()) {
             var key = reader.GetString(0);
             var value = reader.GetString(1);
             kv[key] = value;

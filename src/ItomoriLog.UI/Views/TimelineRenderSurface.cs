@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+
 using ItomoriLog.UI.ViewModels;
 
 namespace ItomoriLog.UI.Views;
@@ -48,8 +49,7 @@ public sealed class TimelineRenderSurface : Control
         context.DrawLine(GridPen, new Point(0, canvasH / 2), new Point(canvasW, canvasH / 2));
         context.DrawLine(GridPen, new Point(0, canvasH), new Point(canvasW, canvasH));
 
-        foreach (var bin in bins)
-        {
+        foreach (var bin in bins) {
             if (bin.End <= visibleStart || bin.Start >= visibleEnd)
                 continue;
 
@@ -63,16 +63,14 @@ public sealed class TimelineRenderSurface : Control
 
             context.DrawRectangle(GetLevelBrush(bin.DominantLevel), null, new Rect(x, y, w, h));
 
-            if (bin.MatchedCount > 0)
-            {
+            if (bin.MatchedCount > 0) {
                 var matchedHeight = bin.MatchedCount / (double)maxCount * canvasH;
                 var matchedY = canvasH - matchedHeight;
                 context.DrawRectangle(MatchedBrush, null, new Rect(x, matchedY, w, matchedHeight));
             }
         }
 
-        if (vm.SelectedStart.HasValue && vm.SelectedEnd.HasValue)
-        {
+        if (vm.SelectedStart.HasValue && vm.SelectedEnd.HasValue) {
             var selStart = vm.SelectedStart.Value;
             var selEnd = vm.SelectedEnd.Value;
             var sx = (selStart - visibleStart).Ticks / (double)totalTicks * canvasW;
@@ -83,8 +81,7 @@ public sealed class TimelineRenderSurface : Control
         }
     }
 
-    private static SolidColorBrush GetLevelBrush(string? level) => level?.ToUpperInvariant() switch
-    {
+    private static SolidColorBrush GetLevelBrush(string? level) => level?.ToUpperInvariant() switch {
         "INFO" => InfoBrush,
         "WARN" or "WARNING" => WarnBrush,
         "ERROR" or "ERR" or "FATAL" or "CRITICAL" => ErrorBrush,

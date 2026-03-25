@@ -724,8 +724,7 @@ public class TickCompilerTests
         var emitter = new TickSqlEmitter();
         var intervals = new List<UtcInterval>();
         var baseDate = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        for (int i = 0; i < 65; i++)
-        {
+        for (int i = 0; i < 65; i++) {
             intervals.Add(new UtcInterval(baseDate.AddDays(i), baseDate.AddDays(i).AddHours(1)));
         }
 

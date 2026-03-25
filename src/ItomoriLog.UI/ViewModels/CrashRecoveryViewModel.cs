@@ -1,6 +1,8 @@
-using System.Reactive;
-using ReactiveUI;
 using ItomoriLog.Core.Storage;
+
+using ReactiveUI;
+
+using System.Reactive;
 
 namespace ItomoriLog.UI.ViewModels;
 
@@ -29,8 +31,7 @@ public class CrashRecoveryViewModel : ViewModelBase
         _onResume = onResume;
         _onDismiss = onDismiss;
 
-        if (status.CanResume)
-        {
+        if (status.CanResume) {
             IsVisible = true;
             Message = status.ResumableSourcePaths.Count == 1
                 ? "An interrupted ingest can be resumed for 1 staged source."
@@ -38,20 +39,17 @@ public class CrashRecoveryViewModel : ViewModelBase
         }
     }
 
-    public bool IsVisible
-    {
+    public bool IsVisible {
         get => _isVisible;
         set => this.RaiseAndSetIfChanged(ref _isVisible, value);
     }
 
-    public bool IsBusy
-    {
+    public bool IsBusy {
         get => _isBusy;
         set => this.RaiseAndSetIfChanged(ref _isBusy, value);
     }
 
-    public string Message
-    {
+    public string Message {
         get => _message;
         set => this.RaiseAndSetIfChanged(ref _message, value);
     }
@@ -62,15 +60,12 @@ public class CrashRecoveryViewModel : ViewModelBase
     private async Task OnResumeAsync()
     {
         IsBusy = true;
-        try
-        {
+        try {
             if (_onResume is not null)
                 await _onResume();
 
             IsVisible = false;
-        }
-        finally
-        {
+        } finally {
             IsBusy = false;
         }
     }

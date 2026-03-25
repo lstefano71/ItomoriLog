@@ -1,5 +1,6 @@
-using System.IO.Compression;
 using ItomoriLog.Core.Model;
+
+using System.IO.Compression;
 
 namespace ItomoriLog.Core.Ingest;
 
@@ -8,14 +9,12 @@ public static class ZipHandler
     public static IEnumerable<ZipFileEntry> EnumerateEntries(string zipPath, ISkipSink? skipSink = null)
     {
         using var archive = ZipFile.OpenRead(zipPath);
-        foreach (var entry in archive.Entries)
-        {
+        foreach (var entry in archive.Entries) {
             // Skip directories
             if (string.IsNullOrEmpty(entry.Name)) continue;
 
             // Skip nested ZIPs
-            if (entry.FullName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-            {
+            if (entry.FullName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) {
                 skipSink?.Write(new SkipRow(
                     LogicalSourceId: IdentityGenerator.LogicalSourceId(entry.Name),
                     PhysicalFileId: "zip-entry",
@@ -43,8 +42,7 @@ public static class ZipHandler
 
         using var archive = ZipFile.OpenRead(normalizedZipPath);
         var zipEntry = archive.GetEntry(normalizedEntryName);
-        if (zipEntry is null || string.IsNullOrEmpty(zipEntry.Name))
-        {
+        if (zipEntry is null || string.IsNullOrEmpty(zipEntry.Name)) {
             entry = null!;
             return false;
         }
@@ -59,8 +57,7 @@ public static class ZipHandler
 
     public static bool TryGetEntry(string sourcePath, out ZipFileEntry entry)
     {
-        if (!SourcePathHelper.TrySplitArchiveEntry(sourcePath, out var archivePath, out var entryFullName))
-        {
+        if (!SourcePathHelper.TrySplitArchiveEntry(sourcePath, out var archivePath, out var entryFullName)) {
             entry = null!;
             return false;
         }
@@ -101,8 +98,7 @@ internal sealed class ZipEntryStream : Stream
     public override bool CanSeek => !_disposed && _inner.CanSeek;
     public override bool CanWrite => false;
     public override long Length => _inner.Length;
-    public override long Position
-    {
+    public override long Position {
         get => _inner.Position;
         set => _inner.Position = value;
     }
@@ -124,8 +120,7 @@ internal sealed class ZipEntryStream : Stream
         if (_disposed)
             return;
 
-        if (disposing)
-        {
+        if (disposing) {
             _inner.Dispose();
             _archive.Dispose();
         }

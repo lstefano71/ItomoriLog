@@ -1,4 +1,5 @@
 using FluentAssertions;
+
 using ItomoriLog.App;
 
 namespace ItomoriLog.Tests;

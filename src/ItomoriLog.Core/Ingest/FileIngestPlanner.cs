@@ -36,12 +36,10 @@ public sealed class FileIngestPlanner
         var segmentsToReingest = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var skippedFiles = new List<PlannedFileSkip>();
 
-        foreach (var expandedPath in ExpandInputPaths(filePaths, skippedFiles))
-        {
+        foreach (var expandedPath in ExpandInputPaths(filePaths, skippedFiles)) {
             ct.ThrowIfCancellationRequested();
 
-            if (SourcePathHelper.IsArchiveFilePath(expandedPath))
-            {
+            if (SourcePathHelper.IsArchiveFilePath(expandedPath)) {
                 filesToIngest.Add(SourcePathHelper.Normalize(expandedPath));
                 continue;
             }
@@ -50,27 +48,21 @@ public sealed class FileIngestPlanner
 
             long sourceSizeBytes;
             DateTimeOffset lastModifiedUtc;
-            if (SourcePathHelper.TrySplitArchiveEntry(path, out var archivePath, out var entryFullName))
-            {
-                if (!File.Exists(archivePath))
-                {
+            if (SourcePathHelper.TrySplitArchiveEntry(path, out var archivePath, out var entryFullName)) {
+                if (!File.Exists(archivePath)) {
                     skippedFiles.Add(new PlannedFileSkip(path, "Archive file does not exist"));
                     continue;
                 }
 
-                if (!ZipHandler.TryGetEntry(archivePath, entryFullName, out var zipEntry))
-                {
+                if (!ZipHandler.TryGetEntry(archivePath, entryFullName, out var zipEntry)) {
                     skippedFiles.Add(new PlannedFileSkip(path, "Archive entry does not exist"));
                     continue;
                 }
 
                 sourceSizeBytes = zipEntry.SizeBytes;
                 lastModifiedUtc = new DateTimeOffset(File.GetLastWriteTimeUtc(archivePath), TimeSpan.Zero);
-            }
-            else
-            {
-                if (!File.Exists(path))
-                {
+            } else {
+                if (!File.Exists(path)) {
                     skippedFiles.Add(new PlannedFileSkip(path, "File does not exist"));
                     continue;
                 }
@@ -83,8 +75,7 @@ public sealed class FileIngestPlanner
             var physicalFileId = IdentityGenerator.PhysicalFileId(path, sourceSizeBytes, lastModifiedUtc);
 
             var exactMatch = await FindExactPhysicalMatchAsync(physicalFileId, ct);
-            if (exactMatch is not null)
-            {
+            if (exactMatch is not null) {
                 ApplyExistingFileAction(
                     existingFileAction,
                     path,
@@ -97,12 +88,10 @@ public sealed class FileIngestPlanner
             }
 
             var sourcePathMatch = await FindSourcePathMatchAsync(path, ct);
-            if (sourcePathMatch is not null)
-            {
+            if (sourcePathMatch is not null) {
                 var existingLastModifiedUtc = sourcePathMatch.Value.LastModifiedUtc;
                 var modified = existingLastModifiedUtc is null || existingLastModifiedUtc.Value != lastModifiedUtc;
-                if (modified)
-                {
+                if (modified) {
                     ApplyExistingFileAction(
                         existingFileAction,
                         path,
@@ -128,13 +117,11 @@ public sealed class FileIngestPlanner
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var rawPath in inputPaths)
-        {
+        foreach (var rawPath in inputPaths) {
             if (string.IsNullOrWhiteSpace(rawPath))
                 continue;
 
-            if (SourcePathHelper.TrySplitArchiveEntry(rawPath, out var archivePath, out var entryFullName))
-            {
+            if (SourcePathHelper.TrySplitArchiveEntry(rawPath, out var archivePath, out var entryFullName)) {
                 var entryPath = SourcePathHelper.CombineArchiveEntryPath(archivePath, entryFullName);
                 if (seen.Add(entryPath))
                     yield return entryPath;
@@ -142,28 +129,22 @@ public sealed class FileIngestPlanner
             }
 
             var fullPath = Path.GetFullPath(rawPath);
-            if (File.Exists(fullPath))
-            {
+            if (File.Exists(fullPath)) {
                 if (seen.Add(fullPath))
                     yield return fullPath;
                 continue;
             }
 
-            if (Directory.Exists(fullPath))
-            {
+            if (Directory.Exists(fullPath)) {
                 IEnumerable<string> files;
-                try
-                {
+                try {
                     files = Directory.EnumerateFiles(fullPath, "*", SearchOption.AllDirectories);
-                }
-                catch (Exception ex)
-                {
+                } catch (Exception ex) {
                     skippedFiles.Add(new PlannedFileSkip(fullPath, $"Directory expansion failed: {ex.Message}"));
                     continue;
                 }
 
-                foreach (var file in files)
-                {
+                foreach (var file in files) {
                     var expanded = Path.GetFullPath(file);
                     if (seen.Add(expanded))
                         yield return expanded;
@@ -185,8 +166,7 @@ public sealed class FileIngestPlanner
         HashSet<string> segmentsToReingest,
         List<PlannedFileSkip> skippedFiles)
     {
-        switch (action)
-        {
+        switch (action) {
             case ExistingFileAction.Skip:
                 skippedFiles.Add(new PlannedFileSkip(path, $"{reason}; action=Skip"));
                 break;

@@ -1,12 +1,15 @@
-using System.Collections.ObjectModel;
-using System.Reactive.Concurrency;
-using System.Reactive;
 using FluentAssertions;
-using ReactiveUI;
+
 using ItomoriLog.Core.Ingest;
 using ItomoriLog.Core.Model;
 using ItomoriLog.Core.Storage;
 using ItomoriLog.UI.ViewModels;
+
+using ReactiveUI;
+
+using System.Collections.ObjectModel;
+using System.Reactive;
+using System.Reactive.Concurrency;
 
 namespace ItomoriLog.Tests.Query;
 
@@ -62,8 +65,7 @@ public class LogsPageViewModelTests : IDisposable
     {
         await SeedRowsAsync(25);
 
-        var vm = new LogsPageViewModel(_factory, "UTC")
-        {
+        var vm = new LogsPageViewModel(_factory, "UTC") {
             QueryText = """timestamp in '$start..$latest'"""
         };
 
@@ -78,8 +80,7 @@ public class LogsPageViewModelTests : IDisposable
     [Fact]
     public async Task ClearQueryCommand_ClearsQueryText()
     {
-        var vm = new LogsPageViewModel(_factory, "UTC")
-        {
+        var vm = new LogsPageViewModel(_factory, "UTC") {
             QueryText = "timeout"
         };
 
@@ -93,8 +94,7 @@ public class LogsPageViewModelTests : IDisposable
     {
         var start = new DateTimeOffset(2025, 6, 15, 12, 0, 0, TimeSpan.Zero);
         var end = start.AddMinutes(5);
-        var vm = new LogsPageViewModel(_factory, "UTC")
-        {
+        var vm = new LogsPageViewModel(_factory, "UTC") {
             QueryText = "timeout",
             StartUtc = start,
             EndUtc = end,
@@ -155,8 +155,7 @@ public class LogsPageViewModelTests : IDisposable
         var rows = new List<LogRow>();
         var baseTs = new DateTimeOffset(2025, 6, 15, 12, 0, 0, TimeSpan.Zero);
 
-        for (var i = 0; i < count; i++)
-        {
+        for (var i = 0; i < count; i++) {
             var actualIndex = startIndex + i;
             var timestamp = baseTs.AddSeconds(actualIndex);
             rows.Add(new LogRow(

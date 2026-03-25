@@ -1,6 +1,7 @@
+using ReactiveUI;
+
 using System.Collections.ObjectModel;
 using System.Reactive;
-using ReactiveUI;
 
 namespace ItomoriLog.UI.ViewModels;
 
@@ -29,20 +30,17 @@ public class CommandPaletteViewModel : ViewModelBase
             .Subscribe(_ => ApplyFilter());
     }
 
-    public string SearchText
-    {
+    public string SearchText {
         get => _searchText;
         set => this.RaiseAndSetIfChanged(ref _searchText, value);
     }
 
-    public bool IsOpen
-    {
+    public bool IsOpen {
         get => _isOpen;
         set => this.RaiseAndSetIfChanged(ref _isOpen, value);
     }
 
-    public PaletteCommand? SelectedCommand
-    {
+    public PaletteCommand? SelectedCommand {
         get => _selectedCommand;
         set => this.RaiseAndSetIfChanged(ref _selectedCommand, value);
     }
@@ -66,20 +64,16 @@ public class CommandPaletteViewModel : ViewModelBase
 
     public void Toggle()
     {
-        if (IsOpen)
-        {
+        if (IsOpen) {
             Close();
-        }
-        else
-        {
+        } else {
             Open();
         }
     }
 
     public void MoveSelectionBy(int delta)
     {
-        if (FilteredCommands.Count == 0)
-        {
+        if (FilteredCommands.Count == 0) {
             SelectedCommand = null;
             return;
         }
@@ -122,8 +116,7 @@ public class CommandPaletteViewModel : ViewModelBase
         var lowerText = text.ToLowerInvariant();
         var lowerQuery = query.ToLowerInvariant();
 
-        foreach (var ch in lowerQuery)
-        {
+        foreach (var ch in lowerQuery) {
             var found = lowerText.IndexOf(ch, textIndex);
             if (found < 0) return false;
             textIndex = found + 1;

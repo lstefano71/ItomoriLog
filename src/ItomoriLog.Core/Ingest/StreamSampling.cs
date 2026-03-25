@@ -9,8 +9,7 @@ public static class StreamSampling
 
         var buffer = new byte[maxBytes];
         var totalRead = 0;
-        while (totalRead < buffer.Length)
-        {
+        while (totalRead < buffer.Length) {
             var read = await stream.ReadAsync(buffer.AsMemory(totalRead, buffer.Length - totalRead), ct);
             if (read == 0)
                 break;
@@ -41,8 +40,7 @@ internal sealed class ReplayPrefixStream : Stream
     public override bool CanSeek => false;
     public override bool CanWrite => false;
     public override long Length => throw new NotSupportedException();
-    public override long Position
-    {
+    public override long Position {
         get => throw new NotSupportedException();
         set => throw new NotSupportedException();
     }
@@ -55,8 +53,7 @@ internal sealed class ReplayPrefixStream : Stream
         ThrowIfDisposed();
 
         var totalRead = 0;
-        if (_prefixOffset < _prefix.Length)
-        {
+        if (_prefixOffset < _prefix.Length) {
             var prefixCount = Math.Min(buffer.Length, _prefix.Length - _prefixOffset);
             _prefix.AsSpan(_prefixOffset, prefixCount).CopyTo(buffer);
             _prefixOffset += prefixCount;
@@ -75,8 +72,7 @@ internal sealed class ReplayPrefixStream : Stream
         ThrowIfDisposed();
 
         var totalRead = 0;
-        if (_prefixOffset < _prefix.Length)
-        {
+        if (_prefixOffset < _prefix.Length) {
             var prefixCount = Math.Min(buffer.Length, _prefix.Length - _prefixOffset);
             _prefix.AsMemory(_prefixOffset, prefixCount).CopyTo(buffer);
             _prefixOffset += prefixCount;

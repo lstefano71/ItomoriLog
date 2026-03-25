@@ -1,4 +1,5 @@
 using FluentAssertions;
+
 using ItomoriLog.Core.Ingest;
 using ItomoriLog.Core.Model;
 
@@ -28,8 +29,7 @@ public class SkipLoggerTests
         var sink = new ListSkipSink();
         var logger = new SkipLogger(sink, "source1", "file1", "seg1");
 
-        using (var segment = logger.BeginSkip(SkipReasonCode.DecodeError, "Encoding issue"))
-        {
+        using (var segment = logger.BeginSkip(SkipReasonCode.DecodeError, "Encoding issue")) {
             // dispose will auto-close
         }
 

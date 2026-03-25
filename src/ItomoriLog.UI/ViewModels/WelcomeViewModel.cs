@@ -1,8 +1,10 @@
+using ItomoriLog.Core.Storage;
+
+using ReactiveUI;
+
 using System.Collections.ObjectModel;
 using System.Reactive;
 using System.Reactive.Linq;
-using ReactiveUI;
-using ItomoriLog.Core.Storage;
 
 namespace ItomoriLog.UI.ViewModels;
 
@@ -23,8 +25,7 @@ public class WelcomeViewModel : ViewModelBase
         CreateSessionCommand = ReactiveCommand.CreateFromTask(CreateSessionAsync);
         CreateSessionFromDroppedPathsCommand = ReactiveCommand.CreateFromTask<IReadOnlyList<string>>(CreateSessionFromDroppedPathsAsync);
         RefreshRecentCommand = ReactiveCommand.CreateFromTask(RefreshRecentSessionsAsync);
-        OpenSessionCommand = ReactiveCommand.Create<RecentSessionEntry>(entry =>
-        {
+        OpenSessionCommand = ReactiveCommand.Create<RecentSessionEntry>(entry => {
             _main.NavigateToSession(entry.SessionFolder);
         });
 
@@ -32,26 +33,22 @@ public class WelcomeViewModel : ViewModelBase
         Observable.StartAsync(RefreshRecentSessionsAsync).Subscribe();
     }
 
-    public string SessionTitle
-    {
+    public string SessionTitle {
         get => _sessionTitle;
         set => this.RaiseAndSetIfChanged(ref _sessionTitle, value);
     }
 
-    public string SessionDescription
-    {
+    public string SessionDescription {
         get => _sessionDescription;
         set => this.RaiseAndSetIfChanged(ref _sessionDescription, value);
     }
 
-    public string SessionPath
-    {
+    public string SessionPath {
         get => _sessionPath;
         set => this.RaiseAndSetIfChanged(ref _sessionPath, value);
     }
 
-    public string DefaultTimezone
-    {
+    public string DefaultTimezone {
         get => _defaultTimezone;
         set => this.RaiseAndSetIfChanged(ref _defaultTimezone, value);
     }
@@ -75,8 +72,7 @@ public class WelcomeViewModel : ViewModelBase
         var sessionFolder = SessionPaths.CreateNew(SessionPath, SessionTitle);
         var dbPath = SessionPaths.GetDbPath(sessionFolder);
 
-        using (var factory = new DuckLakeConnectionFactory(dbPath))
-        {
+        using (var factory = new DuckLakeConnectionFactory(dbPath)) {
             var store = new SessionStore(factory);
             await store.InitializeAsync(
                 SessionTitle,

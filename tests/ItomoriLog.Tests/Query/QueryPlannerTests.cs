@@ -1,4 +1,5 @@
 using FluentAssertions;
+
 using ItomoriLog.Core.Query;
 
 namespace ItomoriLog.Tests.Query;
@@ -97,8 +98,7 @@ public class QueryPlannerTests
     [Fact]
     public void Plan_TextSearchQuery_ProducesBooleanExpression()
     {
-        var filter = new FilterState
-        {
+        var filter = new FilterState {
             TextSearchQuery = new MessageAndNode(
                 new MessageTermNode("error"),
                 new MessageOrNode(new MessageTermNode("timeout"), new MessageTermNode("retry")))
@@ -122,8 +122,7 @@ public class QueryPlannerTests
     public void Plan_CombinedFilters_AllClausesPresent()
     {
         var start = new DateTimeOffset(2025, 3, 1, 0, 0, 0, TimeSpan.Zero);
-        var filter = new FilterState
-        {
+        var filter = new FilterState {
             StartUtc = start,
             Levels = ["ERROR"],
             TextSearch = "fail",
@@ -213,8 +212,7 @@ public class QueryPlannerTests
     public void Plan_TickWithOtherFilters_MergesCorrectly()
     {
         var ctx = new TickContext(new DateTimeOffset(2025, 6, 15, 12, 0, 0, TimeSpan.Zero));
-        var filter = new FilterState
-        {
+        var filter = new FilterState {
             TickExpression = "$today",
             Levels = ["ERROR"]
         };
@@ -266,8 +264,7 @@ public class QueryPlannerTests
     [Fact]
     public void Plan_ExcludeFilters_ProduceNotInClauses()
     {
-        var filter = new FilterState
-        {
+        var filter = new FilterState {
             ExcludedLevels = ["DEBUG"],
             ExcludedSourceIds = ["src-a"]
         };

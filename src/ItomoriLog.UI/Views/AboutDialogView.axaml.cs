@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Threading;
+
 using ItomoriLog.UI.ViewModels;
 
 namespace ItomoriLog.UI.Views;
@@ -31,8 +32,7 @@ public partial class AboutDialogView : UserControl
         if (DataContext is not AboutDialogViewModel vm)
             return;
 
-        if (e.Key is Key.Escape or Key.Enter)
-        {
+        if (e.Key is Key.Escape or Key.Enter) {
             vm.Close();
             e.Handled = true;
         }

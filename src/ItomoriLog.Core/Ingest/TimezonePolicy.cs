@@ -6,8 +6,7 @@ public static class TimezonePolicy
 {
     public static DateTimeOffset ApplyTimeBasis(DateTimeOffset raw, TimeBasisConfig config)
     {
-        return config.Basis switch
-        {
+        return config.Basis switch {
             TimeBasis.Utc => raw.ToUniversalTime(),
             TimeBasis.Local => raw.ToLocalTime().ToUniversalTime(),
             TimeBasis.FixedOffset when config.OffsetMinutes.HasValue =>
@@ -23,8 +22,7 @@ public static class TimezonePolicy
     /// </summary>
     public static DateTimeOffset ApplyTimeBasisToBare(DateTime bareDateTime, TimeBasisConfig config)
     {
-        return config.Basis switch
-        {
+        return config.Basis switch {
             TimeBasis.Utc => new DateTimeOffset(DateTime.SpecifyKind(bareDateTime, DateTimeKind.Utc)),
             TimeBasis.Local => new DateTimeOffset(DateTime.SpecifyKind(bareDateTime, DateTimeKind.Local)).ToUniversalTime(),
             TimeBasis.FixedOffset when config.OffsetMinutes.HasValue =>
@@ -39,8 +37,7 @@ public static class TimezonePolicy
     {
         var tz = TimeZoneInfo.FindSystemTimeZoneById(zoneId);
         var offset = tz.GetUtcOffset(dt);
-        if (tz.IsInvalidTime(dt))
-        {
+        if (tz.IsInvalidTime(dt)) {
             // Spring forward gap — shift forward
             dt = dt.Add(tz.GetAdjustmentRules()
                 .Where(r => r.DateStart <= dt && r.DateEnd >= dt)

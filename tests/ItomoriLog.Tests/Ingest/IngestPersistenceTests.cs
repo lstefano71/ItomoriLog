@@ -1,5 +1,7 @@
 using DuckDB.NET.Data;
+
 using FluentAssertions;
+
 using ItomoriLog.Core.Ingest;
 using ItomoriLog.Core.Model;
 using ItomoriLog.Core.Storage;

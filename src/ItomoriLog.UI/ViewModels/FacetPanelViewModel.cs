@@ -1,10 +1,12 @@
+using ItomoriLog.Core.Query;
+using ItomoriLog.Core.Storage;
+
+using ReactiveUI;
+
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Reactive;
 using System.Reactive.Linq;
-using ReactiveUI;
-using ItomoriLog.Core.Query;
-using ItomoriLog.Core.Storage;
 
 namespace ItomoriLog.UI.ViewModels;
 
@@ -38,32 +40,27 @@ public class FacetPanelViewModel : ViewModelBase
 
     // --- Properties ---
 
-    public ObservableCollection<FacetItemViewModel> LevelFacets
-    {
+    public ObservableCollection<FacetItemViewModel> LevelFacets {
         get => _levelFacets;
         set => this.RaiseAndSetIfChanged(ref _levelFacets, value);
     }
 
-    public ObservableCollection<FacetItemViewModel> SourceFacets
-    {
+    public ObservableCollection<FacetItemViewModel> SourceFacets {
         get => _sourceFacets;
         set => this.RaiseAndSetIfChanged(ref _sourceFacets, value);
     }
 
-    public DateTimeOffset? FilterStart
-    {
+    public DateTimeOffset? FilterStart {
         get => _filterStart;
         set => this.RaiseAndSetIfChanged(ref _filterStart, value);
     }
 
-    public DateTimeOffset? FilterEnd
-    {
+    public DateTimeOffset? FilterEnd {
         get => _filterEnd;
         set => this.RaiseAndSetIfChanged(ref _filterEnd, value);
     }
 
-    public bool IsLoading
-    {
+    public bool IsLoading {
         get => _isLoading;
         set => this.RaiseAndSetIfChanged(ref _isLoading, value);
     }
@@ -83,21 +80,17 @@ public class FacetPanelViewModel : ViewModelBase
     /// </summary>
     public void RefreshDebounced()
     {
-        lock (_debounceLock)
-        {
+        lock (_debounceLock) {
             _debounceCts?.Cancel();
             _debounceCts?.Dispose();
             _debounceCts = new CancellationTokenSource();
             var ct = _debounceCts.Token;
 
-            _ = Task.Run(async () =>
-            {
-                try
-                {
+            _ = Task.Run(async () => {
+                try {
                     await Task.Delay(200, ct);
                     await RefreshAsync(ct);
-                }
-                catch (OperationCanceledException) { }
+                } catch (OperationCanceledException) { }
             });
         }
     }
@@ -108,8 +101,7 @@ public class FacetPanelViewModel : ViewModelBase
     public async Task RefreshAsync(CancellationToken ct = default)
     {
         IsLoading = true;
-        try
-        {
+        try {
             // Get currently included sources for level query
             var includedSources = GetIncludedValues(SourceFacets);
             // Get currently included levels for source query
@@ -120,8 +112,7 @@ public class FacetPanelViewModel : ViewModelBase
 
             // Query levels
             FacetItem[] levelItems;
-            if (!_cache.TryGetValue(levelCacheKey, out levelItems!))
-            {
+            if (!_cache.TryGetValue(levelCacheKey, out levelItems!)) {
                 levelItems = await _query.QueryLevelsAsync(
                     FilterStart, FilterEnd, includedSources.Count > 0 ? includedSources : null, ct);
                 _cache[levelCacheKey] = levelItems;
@@ -129,8 +120,7 @@ public class FacetPanelViewModel : ViewModelBase
 
             // Query sources
             FacetItem[] sourceItems;
-            if (!_cache.TryGetValue(sourceCacheKey, out sourceItems!))
-            {
+            if (!_cache.TryGetValue(sourceCacheKey, out sourceItems!)) {
                 sourceItems = await _query.QuerySourcesAsync(
                     FilterStart, FilterEnd, includedLevels.Count > 0 ? includedLevels : null, ct);
                 _cache[sourceCacheKey] = sourceItems;
@@ -141,10 +131,7 @@ public class FacetPanelViewModel : ViewModelBase
             // Merge with existing selection states
             LevelFacets = MergeWithExisting(levelItems, LevelFacets, OnLevelFacetStateChanged);
             SourceFacets = MergeWithExisting(sourceItems, SourceFacets, OnSourceFacetStateChanged);
-        }
-        catch (OperationCanceledException) { }
-        finally
-        {
+        } catch (OperationCanceledException) { } finally {
             IsLoading = false;
         }
     }
@@ -250,11 +237,9 @@ public class FacetPanelViewModel : ViewModelBase
         var existingStates = existing.ToDictionary(f => f.Value, f => f.State);
         var result = new ObservableCollection<FacetItemViewModel>();
 
-        foreach (var item in newItems)
-        {
+        foreach (var item in newItems) {
             var state = existingStates.GetValueOrDefault(item.Value, FacetSelectionState.Ignore);
-            result.Add(new FacetItemViewModel(item.Value, item.Count, onStateChanged)
-            {
+            result.Add(new FacetItemViewModel(item.Value, item.Count, onStateChanged) {
                 State = state
             });
         }
@@ -273,8 +258,7 @@ public class FacetPanelViewModel : ViewModelBase
             ? FacetSelectionState.Exclude
             : FacetSelectionState.Include;
 
-        foreach (var facet in facets)
-        {
+        foreach (var facet in facets) {
             if (!ReferenceEquals(facet, changed) && facet.State == conflictingState)
                 facet.State = FacetSelectionState.Ignore;
         }

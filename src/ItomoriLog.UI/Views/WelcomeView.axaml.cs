@@ -1,7 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Platform.Storage;
-using ReactiveUI;
+
 using ItomoriLog.UI.ViewModels;
 
 namespace ItomoriLog.UI.Views;

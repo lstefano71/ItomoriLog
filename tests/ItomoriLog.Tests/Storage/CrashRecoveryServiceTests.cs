@@ -1,4 +1,5 @@
 using FluentAssertions;
+
 using ItomoriLog.Core.Storage;
 
 namespace ItomoriLog.Tests.Storage;

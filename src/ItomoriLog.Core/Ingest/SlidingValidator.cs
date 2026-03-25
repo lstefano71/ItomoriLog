@@ -23,10 +23,8 @@ public sealed class SlidingValidator
         _extractResults.Enqueue(timestampExtracted);
     }
 
-    public bool ShouldRedetect
-    {
-        get
-        {
+    public bool ShouldRedetect {
+        get {
             if (_matchResults.Count < _windowSize) return false;
             var matchRate = (double)_matchResults.Count(x => x) / _matchResults.Count;
             var extractRate = (double)_extractResults.Count(x => x) / _extractResults.Count;

@@ -1,8 +1,10 @@
+using ItomoriLog.Core.Ingest;
+
+using ReactiveUI;
+
 using System.Collections.ObjectModel;
 using System.Reactive;
 using System.Reactive.Linq;
-using ReactiveUI;
-using ItomoriLog.Core.Ingest;
 
 namespace ItomoriLog.UI.ViewModels;
 
@@ -39,26 +41,22 @@ public class DetectionWizardViewModel : ViewModelBase
 
     public Func<DetectionCandidate, IReadOnlyList<string>> PreviewProvider { get; }
 
-    public DetectionCandidate? SelectedCandidate
-    {
+    public DetectionCandidate? SelectedCandidate {
         get => _selectedCandidate;
         set => this.RaiseAndSetIfChanged(ref _selectedCandidate, value);
     }
 
-    public string PreviewText
-    {
+    public string PreviewText {
         get => _previewText;
         set => this.RaiseAndSetIfChanged(ref _previewText, value);
     }
 
-    public bool IsLoadingPreview
-    {
+    public bool IsLoadingPreview {
         get => _isLoadingPreview;
         set => this.RaiseAndSetIfChanged(ref _isLoadingPreview, value);
     }
 
-    public string StatusMessage
-    {
+    public string StatusMessage {
         get => _statusMessage;
         set => this.RaiseAndSetIfChanged(ref _statusMessage, value);
     }
@@ -72,21 +70,16 @@ public class DetectionWizardViewModel : ViewModelBase
     private void LoadPreview(DetectionCandidate candidate)
     {
         IsLoadingPreview = true;
-        try
-        {
+        try {
             var lines = candidate.PreviewLines ?? PreviewProvider(candidate);
             PreviewText = lines.Count > 0
                 ? string.Join(Environment.NewLine, lines)
                 : "(no records parsed)";
             StatusMessage = $"Showing {lines.Count} preview record(s) for {candidate.FormatName}";
-        }
-        catch (Exception ex)
-        {
+        } catch (Exception ex) {
             PreviewText = $"Error loading preview: {ex.Message}";
             StatusMessage = "Preview failed";
-        }
-        finally
-        {
+        } finally {
             IsLoadingPreview = false;
         }
     }

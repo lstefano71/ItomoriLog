@@ -1,4 +1,5 @@
 using DuckDB.NET.Data;
+
 using ItomoriLog.Core.Model;
 
 namespace ItomoriLog.Core.Storage;
@@ -20,8 +21,7 @@ public sealed class SessionStore
         var sessionId = Guid.NewGuid().ToString("N");
         var now = DateTimeOffset.UtcNow;
 
-        using (var clearCmd = conn.CreateCommand())
-        {
+        using (var clearCmd = conn.CreateCommand()) {
             clearCmd.CommandText = "DELETE FROM session";
             await clearCmd.ExecuteNonQueryAsync(ct);
         }
@@ -76,18 +76,15 @@ public sealed class SessionStore
         var sets = new List<string>();
         var parameters = new List<DuckDBParameter>();
 
-        if (title is not null)
-        {
+        if (title is not null) {
             sets.Add($"title = ${parameters.Count + 1}");
             parameters.Add(new DuckDBParameter { Value = title });
         }
-        if (description is not null)
-        {
+        if (description is not null) {
             sets.Add($"description = ${parameters.Count + 1}");
             parameters.Add(new DuckDBParameter { Value = description });
         }
-        if (defaultTimezone is not null)
-        {
+        if (defaultTimezone is not null) {
             sets.Add($"default_timezone = ${parameters.Count + 1}");
             parameters.Add(new DuckDBParameter { Value = defaultTimezone });
         }

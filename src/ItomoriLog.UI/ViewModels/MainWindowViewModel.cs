@@ -1,6 +1,6 @@
 using ReactiveUI;
+
 using System.Reactive.Linq;
-using System;
 
 namespace ItomoriLog.UI.ViewModels;
 
@@ -74,8 +74,7 @@ public class MainWindowViewModel : ReactiveObject
 
     public string[] StartupArgs { get; private set; } = [];
 
-    public ViewModelBase CurrentView
-    {
+    public ViewModelBase CurrentView {
         get => _currentView;
         set => this.RaiseAndSetIfChanged(ref _currentView, value);
     }

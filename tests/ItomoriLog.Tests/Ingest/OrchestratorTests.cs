@@ -1,10 +1,11 @@
-using System.IO.Compression;
-using System.Text;
 using FluentAssertions;
+
 using ItomoriLog.Core.Ingest;
-using ItomoriLog.Core.Ingest.Detectors;
 using ItomoriLog.Core.Model;
 using ItomoriLog.Core.Storage;
+
+using System.IO.Compression;
+using System.Text;
 
 namespace ItomoriLog.Tests.Ingest;
 
@@ -389,8 +390,7 @@ public class OrchestratorTests : IDisposable
     {
         var dbPath = Path.Combine(_tempDir, "tracker_test.duckdb");
         var factory = new DuckLakeConnectionFactory(dbPath);
-        try
-        {
+        try {
             var conn = await factory.GetConnectionAsync();
             await SchemaInitializer.EnsureSchemaAsync(conn);
 
@@ -407,9 +407,7 @@ public class OrchestratorTests : IDisposable
             // Should no longer be interrupted
             interrupted = await tracker.GetInterruptedRunsAsync();
             interrupted.Should().NotContain(runId);
-        }
-        finally
-        {
+        } finally {
             factory.Dispose();
         }
     }
@@ -423,8 +421,7 @@ public class OrchestratorTests : IDisposable
     {
         var dbPath = Path.Combine(_tempDir, "orch_text_test.duckdb");
         var factory = new DuckLakeConnectionFactory(dbPath);
-        try
-        {
+        try {
             var conn = await factory.GetConnectionAsync();
             await SchemaInitializer.EnsureSchemaAsync(conn);
 
@@ -449,9 +446,7 @@ public class OrchestratorTests : IDisposable
             cmd.CommandText = "SELECT COUNT(*) FROM logs";
             var count = Convert.ToInt64(await cmd.ExecuteScalarAsync());
             count.Should().Be(25);
-        }
-        finally
-        {
+        } finally {
             factory.Dispose();
         }
     }
@@ -461,8 +456,7 @@ public class OrchestratorTests : IDisposable
     {
         var dbPath = Path.Combine(_tempDir, "orch_csv_test.duckdb");
         var factory = new DuckLakeConnectionFactory(dbPath);
-        try
-        {
+        try {
             var conn = await factory.GetConnectionAsync();
             await SchemaInitializer.EnsureSchemaAsync(conn);
 
@@ -481,9 +475,7 @@ public class OrchestratorTests : IDisposable
             result.Status.Should().Be("completed");
             result.TotalRows.Should().Be(15);
             result.FilesProcessed.Should().Be(1);
-        }
-        finally
-        {
+        } finally {
             factory.Dispose();
         }
     }
@@ -493,8 +485,7 @@ public class OrchestratorTests : IDisposable
     {
         var dbPath = Path.Combine(_tempDir, "orch_ndjson_test.duckdb");
         var factory = new DuckLakeConnectionFactory(dbPath);
-        try
-        {
+        try {
             var conn = await factory.GetConnectionAsync();
             await SchemaInitializer.EnsureSchemaAsync(conn);
 
@@ -513,9 +504,7 @@ public class OrchestratorTests : IDisposable
             result.Status.Should().Be("completed");
             result.TotalRows.Should().Be(10);
             result.FilesProcessed.Should().Be(1);
-        }
-        finally
-        {
+        } finally {
             factory.Dispose();
         }
     }
@@ -525,8 +514,7 @@ public class OrchestratorTests : IDisposable
     {
         var dbPath = Path.Combine(_tempDir, "orch_mixed_test.duckdb");
         var factory = new DuckLakeConnectionFactory(dbPath);
-        try
-        {
+        try {
             var conn = await factory.GetConnectionAsync();
             await SchemaInitializer.EnsureSchemaAsync(conn);
 
@@ -560,9 +548,7 @@ public class OrchestratorTests : IDisposable
             result.Status.Should().Be("completed");
             result.TotalRows.Should().Be(50);
             result.FilesProcessed.Should().Be(3);
-        }
-        finally
-        {
+        } finally {
             factory.Dispose();
         }
     }
@@ -572,8 +558,7 @@ public class OrchestratorTests : IDisposable
     {
         var dbPath = Path.Combine(_tempDir, "orch_zip_test.duckdb");
         var factory = new DuckLakeConnectionFactory(dbPath);
-        try
-        {
+        try {
             var conn = await factory.GetConnectionAsync();
             await SchemaInitializer.EnsureSchemaAsync(conn);
 
@@ -591,9 +576,7 @@ public class OrchestratorTests : IDisposable
             result.Status.Should().Be("completed");
             result.TotalRows.Should().Be(25);
             result.FilesProcessed.Should().Be(1);
-        }
-        finally
-        {
+        } finally {
             factory.Dispose();
         }
     }
@@ -603,8 +586,7 @@ public class OrchestratorTests : IDisposable
     {
         var dbPath = Path.Combine(_tempDir, "orch_zip_entry_test.duckdb");
         var factory = new DuckLakeConnectionFactory(dbPath);
-        try
-        {
+        try {
             var conn = await factory.GetConnectionAsync();
             await SchemaInitializer.EnsureSchemaAsync(conn);
 
@@ -633,9 +615,7 @@ public class OrchestratorTests : IDisposable
             reader.GetInt64(0).Should().Be(25);
             reader.GetString(1).Should().Be(entrySourcePath);
             reader.GetString(2).Should().Be(entrySourcePath);
-        }
-        finally
-        {
+        } finally {
             factory.Dispose();
         }
     }
@@ -645,8 +625,7 @@ public class OrchestratorTests : IDisposable
     {
         var dbPath = Path.Combine(_tempDir, "orch_unrec_test.duckdb");
         var factory = new DuckLakeConnectionFactory(dbPath);
-        try
-        {
+        try {
             var conn = await factory.GetConnectionAsync();
             await SchemaInitializer.EnsureSchemaAsync(conn);
 
@@ -667,9 +646,7 @@ public class OrchestratorTests : IDisposable
 
             result.TotalRows.Should().Be(0);
             result.Skips.Should().Contain(s => s.ReasonCode == SkipReasonCode.NotRecognized);
-        }
-        finally
-        {
+        } finally {
             factory.Dispose();
         }
     }

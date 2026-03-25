@@ -10,8 +10,7 @@ internal static class CsvPreviewHelper
         using var reader = new StreamReader(stream, encoding, detectEncodingFromByteOrderMarks: true, leaveOpen: false);
 
         var lines = new List<string>();
-        while (reader.ReadLine() is { } line && lines.Count < maxLines)
-        {
+        while (reader.ReadLine() is { } line && lines.Count < maxLines) {
             if (!string.IsNullOrWhiteSpace(line))
                 lines.Add(line);
         }
@@ -26,15 +25,11 @@ internal static class CsvPreviewHelper
         var inQuotes = false;
         var i = 0;
 
-        while (i < line.Length)
-        {
+        while (i < line.Length) {
             var c = line[i];
-            if (inQuotes)
-            {
-                if (c == quote)
-                {
-                    if (i + 1 < line.Length && line[i + 1] == quote)
-                    {
+            if (inQuotes) {
+                if (c == quote) {
+                    if (i + 1 < line.Length && line[i + 1] == quote) {
                         sb.Append(quote);
                         i += 2;
                         continue;
@@ -50,15 +45,13 @@ internal static class CsvPreviewHelper
                 continue;
             }
 
-            if (c == quote)
-            {
+            if (c == quote) {
                 inQuotes = true;
                 i++;
                 continue;
             }
 
-            if (c == delimiter)
-            {
+            if (c == delimiter) {
                 fields.Add(sb.ToString());
                 sb.Clear();
                 i++;
@@ -80,11 +73,9 @@ internal static class CsvPreviewHelper
         bool hasHeader,
         IReadOnlyList<string>? fallbackColumnNames = null)
     {
-        if (sampleLines.Count > 0)
-        {
+        if (sampleLines.Count > 0) {
             var firstFields = SplitLine(sampleLines[0], delimiter, quote);
-            if (firstFields.Length > 0)
-            {
+            if (firstFields.Length > 0) {
                 if (hasHeader)
                     return firstFields;
 

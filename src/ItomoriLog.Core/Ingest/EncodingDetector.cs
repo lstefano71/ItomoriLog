@@ -33,8 +33,7 @@ public static class EncodingDetector
     }
 
     public static string Describe(Encoding encoding) =>
-        encoding.CodePage switch
-        {
+        encoding.CodePage switch {
             65001 => "UTF-8",
             1200 => "UTF-16 LE",
             1201 => "UTF-16 BE",
@@ -45,8 +44,7 @@ public static class EncodingDetector
     private static int ReadFully(Stream stream, Span<byte> buffer)
     {
         var totalRead = 0;
-        while (totalRead < buffer.Length)
-        {
+        while (totalRead < buffer.Length) {
             var read = stream.Read(buffer[totalRead..]);
             if (read == 0)
                 break;
@@ -58,15 +56,10 @@ public static class EncodingDetector
 
     private static bool IsValidUtf8(ReadOnlySpan<byte> data)
     {
-        for (int i = 0; i < data.Length;)
-        {
+        for (int i = 0; i < data.Length;) {
             byte b = data[i];
             int seqLen;
-            if (b <= 0x7F) { seqLen = 1; }
-            else if (b >= 0xC2 && b <= 0xDF) { seqLen = 2; }
-            else if (b >= 0xE0 && b <= 0xEF) { seqLen = 3; }
-            else if (b >= 0xF0 && b <= 0xF4) { seqLen = 4; }
-            else return false;
+            if (b <= 0x7F) { seqLen = 1; } else if (b >= 0xC2 && b <= 0xDF) { seqLen = 2; } else if (b >= 0xE0 && b <= 0xEF) { seqLen = 3; } else if (b >= 0xF0 && b <= 0xF4) { seqLen = 4; } else return false;
 
             if (i + seqLen > data.Length) break; // allow truncation at end
             for (int j = 1; j < seqLen; j++)

@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Threading;
+
 using ItomoriLog.UI.ViewModels;
 
 namespace ItomoriLog.UI.Views;
@@ -30,8 +31,7 @@ public partial class CommandPaletteView : UserControl
     {
         if (DataContext is not CommandPaletteViewModel vm) return;
 
-        switch (e.Key)
-        {
+        switch (e.Key) {
             case Key.Escape:
                 vm.Close();
                 e.Handled = true;

@@ -53,8 +53,7 @@ public sealed class TickCompiler : ITickCompiler
 
         var trimmed = input.Trim();
 
-        try
-        {
+        try {
             var tokens = Lexer.Tokenize(trimmed);
             var pos = 0;
             var node = Parser.ParseTopLevel(tokens, ref pos, context);
@@ -68,13 +67,9 @@ public sealed class TickCompiler : ITickCompiler
             var merged = MergeIntervals(raw);
             var normalized = BuildNormalized(merged);
             return new TickCompileResult(merged, normalized, null);
-        }
-        catch (TickCompileException ex)
-        {
+        } catch (TickCompileException ex) {
             return new TickCompileResult([], trimmed, ex.Message);
-        }
-        catch
-        {
+        } catch {
             return new TickCompileResult([], trimmed, "Unexpected error parsing expression.");
         }
     }
@@ -114,18 +109,14 @@ public sealed class TickCompiler : ITickCompiler
 
         var merged = new List<UtcInterval> { raw[0] };
 
-        for (int i = 1; i < raw.Count; i++)
-        {
+        for (int i = 1; i < raw.Count; i++) {
             var last = merged[^1];
             var cur = raw[i];
 
             // Half-open: [a,b) and [b,c) are adjacent -> merge
-            if (cur.Start <= last.ExclusiveEnd)
-            {
+            if (cur.Start <= last.ExclusiveEnd) {
                 merged[^1] = new UtcInterval(last.Start, cur.ExclusiveEnd > last.ExclusiveEnd ? cur.ExclusiveEnd : last.ExclusiveEnd);
-            }
-            else
-            {
+            } else {
                 merged.Add(cur);
             }
         }
@@ -135,16 +126,14 @@ public sealed class TickCompiler : ITickCompiler
 
     private static string BuildNormalized(IReadOnlyList<UtcInterval> intervals)
     {
-        if (intervals.Count == 1)
-        {
+        if (intervals.Count == 1) {
             var iv = intervals[0];
             return $"{FormatTimestamp(iv.Start)}..{FormatTimestamp(iv.ExclusiveEnd)}";
         }
 
         var sb = new StringBuilder();
         sb.Append('[');
-        for (int i = 0; i < intervals.Count; i++)
-        {
+        for (int i = 0; i < intervals.Count; i++) {
             if (i > 0) sb.Append(", ");
             var iv = intervals[i];
             sb.Append(FormatTimestamp(iv.Start));
@@ -170,13 +159,11 @@ public sealed class TickCompiler : ITickCompiler
         var total = TimeSpan.Zero;
         int endPos = pos;
 
-        while (match.Success && match.Index == endPos)
-        {
+        while (match.Success && match.Index == endPos) {
             var val = long.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
             var unit = match.Groups[2].Value;
 
-            total += unit switch
-            {
+            total += unit switch {
                 "y" => TimeSpan.FromDays(val * 365),
                 "M" => TimeSpan.FromDays(val * 30),
                 "w" => TimeSpan.FromDays(val * 7),
@@ -239,8 +226,7 @@ public sealed class TickCompiler : ITickCompiler
             var tokens = new List<Token>();
             int pos = 0;
 
-            while (pos < input.Length)
-            {
+            while (pos < input.Length) {
                 SkipWhitespace(input, ref pos);
                 if (pos >= input.Length) break;
 
@@ -252,24 +238,19 @@ public sealed class TickCompiler : ITickCompiler
                 if (c == ';') { tokens.Add(new Token(TokenKind.Semicolon, ";")); pos++; continue; }
                 if (c == '+') { tokens.Add(new Token(TokenKind.Plus, "+")); pos++; continue; }
 
-                if (c == '@')
-                {
-                    if (TryConsumeTimezone(input, ref pos, out var tzToken))
-                    {
+                if (c == '@') {
+                    if (TryConsumeTimezone(input, ref pos, out var tzToken)) {
                         tokens.Add(tzToken);
                         continue;
                     }
                     return tokens;
                 }
 
-                if (c == '-')
-                {
-                    if (tokens.Count > 0)
-                    {
+                if (c == '-') {
+                    if (tokens.Count > 0) {
                         var prev = tokens[^1].Kind;
                         if (prev == TokenKind.Variable || prev == TokenKind.IsoLiteral ||
-                            prev == TokenKind.RBracket || prev == TokenKind.Number)
-                        {
+                            prev == TokenKind.RBracket || prev == TokenKind.Number) {
                             tokens.Add(new Token(TokenKind.Minus, "-"));
                             pos++;
                             continue;
@@ -277,39 +258,32 @@ public sealed class TickCompiler : ITickCompiler
                     }
                 }
 
-                if (c == '.' && pos + 1 < input.Length && input[pos + 1] == '.')
-                {
+                if (c == '.' && pos + 1 < input.Length && input[pos + 1] == '.') {
                     tokens.Add(new Token(TokenKind.DotDot, ".."));
                     pos += 2;
                     continue;
                 }
 
-                if (c == '$')
-                {
+                if (c == '$') {
                     var varToken = ConsumeVariable(input, ref pos);
                     if (varToken != null) { tokens.Add(varToken.Value); continue; }
                     return tokens;
                 }
 
-                if (char.IsDigit(c) || (c == '-' && pos + 1 < input.Length && char.IsDigit(input[pos + 1])))
-                {
-                    if (TryConsumeIsoLiteral(input, ref pos, out var isoToken))
-                    {
+                if (char.IsDigit(c) || (c == '-' && pos + 1 < input.Length && char.IsDigit(input[pos + 1]))) {
+                    if (TryConsumeIsoLiteral(input, ref pos, out var isoToken)) {
                         tokens.Add(isoToken);
                         continue;
                     }
-                    if (TryConsumeNumber(input, ref pos, out var numToken))
-                    {
+                    if (TryConsumeNumber(input, ref pos, out var numToken)) {
                         tokens.Add(numToken);
                         continue;
                     }
                     return tokens;
                 }
 
-                if ((c == 'T' || c == 't') && pos + 1 < input.Length && char.IsDigit(input[pos + 1]))
-                {
-                    if (TryConsumeTimeSuffix(input, ref pos, out var timeToken))
-                    {
+                if ((c == 'T' || c == 't') && pos + 1 < input.Length && char.IsDigit(input[pos + 1])) {
+                    if (TryConsumeTimeSuffix(input, ref pos, out var timeToken)) {
                         tokens.Add(timeToken);
                         continue;
                     }
@@ -326,11 +300,9 @@ public sealed class TickCompiler : ITickCompiler
             var remaining = input.AsSpan(pos);
             string[] knownVariables = ["$yesterday", "$tomorrow", "$today", "$latest", "$first", "$start", "$end", "$now"];
 
-            foreach (var variable in knownVariables)
-            {
+            foreach (var variable in knownVariables) {
                 if (remaining.StartsWith(variable, StringComparison.OrdinalIgnoreCase)
-                    && IsVariableBoundary(input, pos + variable.Length))
-                {
+                    && IsVariableBoundary(input, pos + variable.Length)) {
                     pos += variable.Length;
                     return new Token(TokenKind.Variable, variable.ToLowerInvariant());
                 }
@@ -341,8 +313,7 @@ public sealed class TickCompiler : ITickCompiler
             while (pos < input.Length && (char.IsLetterOrDigit(input[pos]) || input[pos] == '_'))
                 pos++;
 
-            if (pos <= start + 1)
-            {
+            if (pos <= start + 1) {
                 pos = start;
                 return null;
             }
@@ -371,26 +342,22 @@ public sealed class TickCompiler : ITickCompiler
             var window = input.Substring(pos, maxLen);
 
             var dateTPrefixMatch = Regex.Match(window, @"^\d{4}-\d{2}-\d{2}T");
-            if (dateTPrefixMatch.Success)
-            {
+            if (dateTPrefixMatch.Success) {
                 int pLen = dateTPrefixMatch.Length;
-                if (pos + pLen < input.Length && input[pos + pLen] == '[')
-                {
+                if (pos + pLen < input.Length && input[pos + pLen] == '[') {
                     token = new Token(TokenKind.IsoLiteral, window[..pLen]);
                     pos += pLen;
                     return true;
                 }
             }
 
-            for (int len = maxLen; len >= 10; len--)
-            {
+            for (int len = maxLen; len >= 10; len--) {
                 var candidate = window[..len];
                 if (DateTimeOffset.TryParseExact(
                         candidate, DateFormats,
                         CultureInfo.InvariantCulture,
                         DateTimeStyles.AssumeUniversal | DateTimeStyles.AllowWhiteSpaces,
-                        out _))
-                {
+                        out _)) {
                     token = new Token(TokenKind.IsoLiteral, candidate);
                     pos += len;
                     return true;
@@ -398,11 +365,9 @@ public sealed class TickCompiler : ITickCompiler
             }
 
             var partialMatch = Regex.Match(window, @"^\d{4}(-\d{2})?-");
-            if (partialMatch.Success)
-            {
+            if (partialMatch.Success) {
                 int pLen = partialMatch.Length;
-                if (pos + pLen < input.Length && input[pos + pLen] == '[')
-                {
+                if (pos + pLen < input.Length && input[pos + pLen] == '[') {
                     token = new Token(TokenKind.IsoLiteral, window[..pLen]);
                     pos += pLen;
                     return true;
@@ -422,8 +387,7 @@ public sealed class TickCompiler : ITickCompiler
             if (pos == start)
                 return false;
 
-            if (pos < input.Length && input[pos] == ':')
-            {
+            if (pos < input.Length && input[pos] == ':') {
                 while (pos < input.Length && (char.IsDigit(input[pos]) || input[pos] == ':' || input[pos] == '.'))
                     pos++;
 
@@ -448,16 +412,14 @@ public sealed class TickCompiler : ITickCompiler
 
             pos++;
             int payloadStart = pos;
-            while (pos < input.Length)
-            {
+            while (pos < input.Length) {
                 char c = input[pos];
                 if (char.IsWhiteSpace(c) || c == ',' || c == ';' || c == '[' || c == ']' || c == '.')
                     break;
                 pos++;
             }
 
-            if (pos <= payloadStart)
-            {
+            if (pos <= payloadStart) {
                 pos = start;
                 return false;
             }
@@ -474,8 +436,7 @@ public sealed class TickCompiler : ITickCompiler
             while (pos < input.Length && (char.IsDigit(input[pos]) || input[pos] == ':' || input[pos] == '.'))
                 pos++;
 
-            if (pos <= start + 1)
-            {
+            if (pos <= start + 1) {
                 pos = start;
                 return false;
             }
@@ -571,41 +532,32 @@ public sealed class TickCompiler : ITickCompiler
 
             AstNode? node;
 
-            if (Peek(tokens, pos) == TokenKind.LBracket)
-            {
+            if (Peek(tokens, pos) == TokenKind.LBracket) {
                 node = ParseBracketedRangeOrList(tokens, ref pos, context);
                 if (node == null) return null;
-            }
-            else if (Peek(tokens, pos) == TokenKind.IsoLiteral)
-            {
+            } else if (Peek(tokens, pos) == TokenKind.IsoLiteral) {
                 node = ParseIsoWithOptionalBrackets(tokens, ref pos);
                 if (node == null) return null;
                 node = TryParseArithmetic(tokens, ref pos, node);
-            }
-            else if (Peek(tokens, pos) == TokenKind.Variable)
-            {
+            } else if (Peek(tokens, pos) == TokenKind.Variable) {
                 node = new VariableNode(tokens[pos].Text);
                 pos++;
                 node = TryParseArithmetic(tokens, ref pos, node);
-            }
-            else
-            {
+            } else {
                 return null;
             }
 
             node = ParseOptionalTimeSuffix(tokens, ref pos, node);
             node = ParseOptionalTimezone(tokens, ref pos, node);
 
-            if (pos < tokens.Count && Peek(tokens, pos) == TokenKind.DotDot)
-            {
+            if (pos < tokens.Count && Peek(tokens, pos) == TokenKind.DotDot) {
                 pos++;
                 var right = ParseAnchorExpr(tokens, ref pos);
                 if (right == null) return null;
                 node = new RangeNode(node, right);
             }
 
-            if (pos < tokens.Count && Peek(tokens, pos) == TokenKind.Semicolon)
-            {
+            if (pos < tokens.Count && Peek(tokens, pos) == TokenKind.Semicolon) {
                 pos++;
                 if (!TryParseDurationFromTokens(tokens, ref pos, out var dur))
                     return null;
@@ -621,18 +573,13 @@ public sealed class TickCompiler : ITickCompiler
 
             AstNode? node;
 
-            if (Peek(tokens, pos) == TokenKind.Variable)
-            {
+            if (Peek(tokens, pos) == TokenKind.Variable) {
                 node = new VariableNode(tokens[pos].Text);
                 pos++;
-            }
-            else if (Peek(tokens, pos) == TokenKind.IsoLiteral)
-            {
+            } else if (Peek(tokens, pos) == TokenKind.IsoLiteral) {
                 node = new LiteralNode(tokens[pos].Text);
                 pos++;
-            }
-            else
-            {
+            } else {
                 return null;
             }
 
@@ -644,8 +591,7 @@ public sealed class TickCompiler : ITickCompiler
 
         private static AstNode TryParseArithmetic(List<Token> tokens, ref int pos, AstNode node)
         {
-            while (pos < tokens.Count)
-            {
+            while (pos < tokens.Count) {
                 var kind = Peek(tokens, pos);
                 if (kind != TokenKind.Plus && kind != TokenKind.Minus)
                     break;
@@ -667,10 +613,8 @@ public sealed class TickCompiler : ITickCompiler
             var isoText = tokens[pos].Text;
             pos++;
 
-            if (pos < tokens.Count && Peek(tokens, pos) == TokenKind.LBracket)
-            {
-                if (isoText.EndsWith("T", StringComparison.OrdinalIgnoreCase))
-                {
+            if (pos < tokens.Count && Peek(tokens, pos) == TokenKind.LBracket) {
+                if (isoText.EndsWith("T", StringComparison.OrdinalIgnoreCase)) {
                     var timeList = ParseTimeListAfterDatePrefix(isoText, tokens, ref pos);
                     if (timeList == null)
                         return null;
@@ -695,10 +639,8 @@ public sealed class TickCompiler : ITickCompiler
             pos++; // consume [
             var items = new List<AstNode>();
 
-            while (pos < tokens.Count && Peek(tokens, pos) != TokenKind.RBracket)
-            {
-                if (items.Count > 0)
-                {
+            while (pos < tokens.Count && Peek(tokens, pos) != TokenKind.RBracket) {
+                if (items.Count > 0) {
                     if (Peek(tokens, pos) != TokenKind.Comma)
                         return null;
                     pos++;
@@ -746,46 +688,37 @@ public sealed class TickCompiler : ITickCompiler
             string suffix = "";
             BracketExpansionNode? nested = null;
 
-            if (pos < tokens.Count && Peek(tokens, pos) == TokenKind.Minus)
-            {
-                if (pos + 1 < tokens.Count && Peek(tokens, pos + 1) == TokenKind.Number)
-                {
+            if (pos < tokens.Count && Peek(tokens, pos) == TokenKind.Minus) {
+                if (pos + 1 < tokens.Count && Peek(tokens, pos + 1) == TokenKind.Number) {
                     var numText = tokens[pos + 1].Text;
                     suffix = "-" + numText.PadLeft(2, '0');
                     pos += 2;
 
                     if (pos < tokens.Count && Peek(tokens, pos) == TokenKind.Minus &&
-                        pos + 1 < tokens.Count && Peek(tokens, pos + 1) == TokenKind.LBracket)
-                    {
+                        pos + 1 < tokens.Count && Peek(tokens, pos + 1) == TokenKind.LBracket) {
                         suffix += "-";
                         pos++;
                         nested = ParseBracketExpansionAsNested("", tokens, ref pos);
                         if (nested == null) return null;
                     }
 
-                    if (pos < tokens.Count && Peek(tokens, pos) == TokenKind.IsoLiteral)
-                    {
+                    if (pos < tokens.Count && Peek(tokens, pos) == TokenKind.IsoLiteral) {
                         var extra = tokens[pos].Text;
-                        if (extra.StartsWith("T", StringComparison.OrdinalIgnoreCase))
-                        {
+                        if (extra.StartsWith("T", StringComparison.OrdinalIgnoreCase)) {
                             suffix += extra;
                             pos++;
                         }
                     }
-                }
-                else if (pos + 1 < tokens.Count && Peek(tokens, pos + 1) == TokenKind.LBracket)
-                {
+                } else if (pos + 1 < tokens.Count && Peek(tokens, pos + 1) == TokenKind.LBracket) {
                     pos++;
                     nested = ParseBracketExpansionAsNested("-", tokens, ref pos);
                     if (nested == null) return null;
                 }
             }
 
-            if (nested == null && pos < tokens.Count && Peek(tokens, pos) == TokenKind.IsoLiteral)
-            {
+            if (nested == null && pos < tokens.Count && Peek(tokens, pos) == TokenKind.IsoLiteral) {
                 var trailing = tokens[pos].Text;
-                if (trailing.StartsWith("T", StringComparison.OrdinalIgnoreCase))
-                {
+                if (trailing.StartsWith("T", StringComparison.OrdinalIgnoreCase)) {
                     suffix += trailing;
                     pos++;
                 }
@@ -810,11 +743,9 @@ public sealed class TickCompiler : ITickCompiler
             pos++;
 
             string suffix = "";
-            if (pos < tokens.Count && Peek(tokens, pos) == TokenKind.IsoLiteral)
-            {
+            if (pos < tokens.Count && Peek(tokens, pos) == TokenKind.IsoLiteral) {
                 var trailing = tokens[pos].Text;
-                if (trailing.StartsWith("T", StringComparison.OrdinalIgnoreCase))
-                {
+                if (trailing.StartsWith("T", StringComparison.OrdinalIgnoreCase)) {
                     suffix = trailing;
                     pos++;
                 }
@@ -827,10 +758,8 @@ public sealed class TickCompiler : ITickCompiler
         {
             var items = new List<AstNode>();
 
-            while (pos < tokens.Count && Peek(tokens, pos) != TokenKind.RBracket)
-            {
-                if (items.Count > 0)
-                {
+            while (pos < tokens.Count && Peek(tokens, pos) != TokenKind.RBracket) {
+                if (items.Count > 0) {
                     if (Peek(tokens, pos) != TokenKind.Comma)
                         return null;
                     pos++;
@@ -850,13 +779,11 @@ public sealed class TickCompiler : ITickCompiler
 
             var kind = Peek(tokens, pos);
 
-            if (kind == TokenKind.Number)
-            {
+            if (kind == TokenKind.Number) {
                 int startNum = int.Parse(tokens[pos].Text, CultureInfo.InvariantCulture);
                 pos++;
 
-                if (pos < tokens.Count && Peek(tokens, pos) == TokenKind.DotDot)
-                {
+                if (pos < tokens.Count && Peek(tokens, pos) == TokenKind.DotDot) {
                     pos++;
                     if (pos >= tokens.Count || Peek(tokens, pos) != TokenKind.Number)
                         return null;
@@ -869,8 +796,7 @@ public sealed class TickCompiler : ITickCompiler
                 return new LiteralNode(startNum.ToString(CultureInfo.InvariantCulture));
             }
 
-            if (kind == TokenKind.IsoLiteral)
-            {
+            if (kind == TokenKind.IsoLiteral) {
                 AstNode node = new LiteralNode(tokens[pos].Text);
                 pos++;
                 node = ParseOptionalTimeSuffix(tokens, ref pos, node);
@@ -878,8 +804,7 @@ public sealed class TickCompiler : ITickCompiler
                 return TryParseArithmetic(tokens, ref pos, node);
             }
 
-            if (kind == TokenKind.Variable)
-            {
+            if (kind == TokenKind.Variable) {
                 AstNode node = new VariableNode(tokens[pos].Text);
                 pos++;
                 node = ParseOptionalTimeSuffix(tokens, ref pos, node);
@@ -897,8 +822,7 @@ public sealed class TickCompiler : ITickCompiler
             var contentStart = pos;
 
             var left = ParseAnchorExpr(tokens, ref pos);
-            if (left != null && pos < tokens.Count && Peek(tokens, pos) == TokenKind.DotDot)
-            {
+            if (left != null && pos < tokens.Count && Peek(tokens, pos) == TokenKind.DotDot) {
                 pos++;
                 var right = ParseAnchorExpr(tokens, ref pos);
                 if (right == null)
@@ -919,10 +843,8 @@ public sealed class TickCompiler : ITickCompiler
         {
             var items = new List<AstNode>();
 
-            while (pos < tokens.Count && Peek(tokens, pos) != TokenKind.RBracket)
-            {
-                if (items.Count > 0)
-                {
+            while (pos < tokens.Count && Peek(tokens, pos) != TokenKind.RBracket) {
+                if (items.Count > 0) {
                     if (Peek(tokens, pos) != TokenKind.Comma)
                         return null;
                     pos++;
@@ -948,8 +870,7 @@ public sealed class TickCompiler : ITickCompiler
 
             var kind = Peek(tokens, pos);
 
-            if (kind == TokenKind.Variable)
-            {
+            if (kind == TokenKind.Variable) {
                 AstNode node = new VariableNode(tokens[pos].Text);
                 pos++;
                 node = ParseOptionalTimeSuffix(tokens, ref pos, node);
@@ -957,8 +878,7 @@ public sealed class TickCompiler : ITickCompiler
                 return TryParseArithmetic(tokens, ref pos, node);
             }
 
-            if (kind == TokenKind.IsoLiteral)
-            {
+            if (kind == TokenKind.IsoLiteral) {
                 return ParseIsoWithOptionalBrackets(tokens, ref pos);
             }
 
@@ -973,8 +893,7 @@ public sealed class TickCompiler : ITickCompiler
             var sb = new StringBuilder();
             int startPos = pos;
 
-            while (pos < tokens.Count)
-            {
+            while (pos < tokens.Count) {
                 var k = tokens[pos].Kind;
                 if (k == TokenKind.DotDot || k == TokenKind.Semicolon ||
                     k == TokenKind.LBracket || k == TokenKind.RBracket ||
@@ -986,16 +905,14 @@ public sealed class TickCompiler : ITickCompiler
                 pos++;
             }
 
-            if (sb.Length == 0)
-            {
+            if (sb.Length == 0) {
                 pos = startPos;
                 return false;
             }
 
             var durationText = sb.ToString();
             int dPos = 0;
-            if (!ConsumeDuration(durationText, ref dPos, out dur) || dPos < durationText.Length)
-            {
+            if (!ConsumeDuration(durationText, ref dPos, out dur) || dPos < durationText.Length) {
                 pos = startPos;
                 return false;
             }
@@ -1005,13 +922,11 @@ public sealed class TickCompiler : ITickCompiler
 
         private static AstNode ParseOptionalTimezone(List<Token> tokens, ref int pos, AstNode node)
         {
-            if (pos < tokens.Count && Peek(tokens, pos) == TokenKind.Timezone)
-            {
+            if (pos < tokens.Count && Peek(tokens, pos) == TokenKind.Timezone) {
                 var tz = tokens[pos].Text;
                 pos++;
 
-                if (node is RangeNode rangeNode)
-                {
+                if (node is RangeNode rangeNode) {
                     return new RangeNode(new TimezoneNode(rangeNode.Start, tz), new TimezoneNode(rangeNode.End, tz));
                 }
 
@@ -1023,11 +938,9 @@ public sealed class TickCompiler : ITickCompiler
 
         private static AstNode ParseOptionalTimeSuffix(List<Token> tokens, ref int pos, AstNode node)
         {
-            if (pos < tokens.Count && Peek(tokens, pos) == TokenKind.IsoLiteral)
-            {
+            if (pos < tokens.Count && Peek(tokens, pos) == TokenKind.IsoLiteral) {
                 var t = tokens[pos].Text;
-                if (t.StartsWith("T", StringComparison.OrdinalIgnoreCase))
-                {
+                if (t.StartsWith("T", StringComparison.OrdinalIgnoreCase)) {
                     pos++;
                     return new TimeSuffixNode(node, t);
                 }
@@ -1052,61 +965,52 @@ public sealed class TickCompiler : ITickCompiler
         public static List<UtcInterval> Evaluate(AstNode node, TickContext context)
         {
             var now = context.Now;
-            switch (node)
-            {
-                case RangeNode rn:
-                {
-                    var starts = EvaluateAnchors(rn.Start, context);
-                    var ends = EvaluateAnchors(rn.End, context);
-                    var result = new List<UtcInterval>();
-                    foreach (var s in starts)
-                        foreach (var e in ends)
-                            result.Add(new UtcInterval(s.Value, e.IsDateOnly ? EndOfDayExclusive(e.Value) : e.Value));
-                    return result;
-                }
-
-                case DurationSuffixNode dsn:
-                {
-                    var anchors = EvaluateAnchors(dsn.Anchor, context);
-                    return anchors.Select(a => new UtcInterval(a.Value, a.Value + dsn.Duration)).ToList();
-                }
-
-                case ListNode ln:
-                {
-                    var result = new List<UtcInterval>();
-                    foreach (var item in ln.Items)
-                    {
-                        var sub = Evaluate(item, context);
-                        result.AddRange(sub);
+            switch (node) {
+                case RangeNode rn: {
+                        var starts = EvaluateAnchors(rn.Start, context);
+                        var ends = EvaluateAnchors(rn.End, context);
+                        var result = new List<UtcInterval>();
+                        foreach (var s in starts)
+                            foreach (var e in ends)
+                                result.Add(new UtcInterval(s.Value, e.IsDateOnly ? EndOfDayExclusive(e.Value) : e.Value));
+                        return result;
                     }
-                    return result;
-                }
 
-                case BracketExpansionNode ben:
-                {
-                    var anchors = ExpandBrackets(ben, context);
-                    return anchors.Select(a => new UtcInterval(a.Value, a.IsDateOnly ? EndOfDayExclusive(a.Value) : a.Value)).ToList();
-                }
+                case DurationSuffixNode dsn: {
+                        var anchors = EvaluateAnchors(dsn.Anchor, context);
+                        return anchors.Select(a => new UtcInterval(a.Value, a.Value + dsn.Duration)).ToList();
+                    }
 
-                case TimezoneNode tzn:
-                {
-                    var anchors = EvaluateAnchors(tzn, context);
-                    return anchors.Select(a => new UtcInterval(a.Value, a.IsDateOnly ? EndOfDayExclusive(a.Value) : a.Value)).ToList();
-                }
+                case ListNode ln: {
+                        var result = new List<UtcInterval>();
+                        foreach (var item in ln.Items) {
+                            var sub = Evaluate(item, context);
+                            result.AddRange(sub);
+                        }
+                        return result;
+                    }
 
-                default:
-                {
-                    var anchors = EvaluateAnchors(node, context);
-                    return anchors.Select(a => new UtcInterval(a.Value, a.IsDateOnly ? EndOfDayExclusive(a.Value) : a.Value)).ToList();
-                }
+                case BracketExpansionNode ben: {
+                        var anchors = ExpandBrackets(ben, context);
+                        return anchors.Select(a => new UtcInterval(a.Value, a.IsDateOnly ? EndOfDayExclusive(a.Value) : a.Value)).ToList();
+                    }
+
+                case TimezoneNode tzn: {
+                        var anchors = EvaluateAnchors(tzn, context);
+                        return anchors.Select(a => new UtcInterval(a.Value, a.IsDateOnly ? EndOfDayExclusive(a.Value) : a.Value)).ToList();
+                    }
+
+                default: {
+                        var anchors = EvaluateAnchors(node, context);
+                        return anchors.Select(a => new UtcInterval(a.Value, a.IsDateOnly ? EndOfDayExclusive(a.Value) : a.Value)).ToList();
+                    }
             }
         }
 
         private static List<Anchor> EvaluateAnchors(AstNode node, TickContext context)
         {
             var now = context.Now;
-            switch (node)
-            {
+            switch (node) {
                 case VariableNode vn:
                     return [ResolveVariable(vn.Name, context)];
 
@@ -1115,22 +1019,20 @@ public sealed class TickCompiler : ITickCompiler
                         return [new Anchor(dto, isDateOnly)];
                     return [];
 
-                case ArithmeticNode an:
-                {
-                    var bases = EvaluateAnchors(an.Base, context);
-                    var keepDateOnly = an.Duration.Ticks % TimeSpan.FromDays(1).Ticks == 0;
-                    return bases.Select(b => new Anchor(
-                        an.Sign == '+' ? b.Value + an.Duration : b.Value - an.Duration,
-                        b.IsDateOnly && keepDateOnly)).ToList();
-                }
+                case ArithmeticNode an: {
+                        var bases = EvaluateAnchors(an.Base, context);
+                        var keepDateOnly = an.Duration.Ticks % TimeSpan.FromDays(1).Ticks == 0;
+                        return bases.Select(b => new Anchor(
+                            an.Sign == '+' ? b.Value + an.Duration : b.Value - an.Duration,
+                            b.IsDateOnly && keepDateOnly)).ToList();
+                    }
 
-                case ListNode ln:
-                {
-                    var result = new List<Anchor>();
-                    foreach (var item in ln.Items)
-                        result.AddRange(EvaluateAnchors(item, context));
-                    return result;
-                }
+                case ListNode ln: {
+                        var result = new List<Anchor>();
+                        foreach (var item in ln.Items)
+                            result.AddRange(EvaluateAnchors(item, context));
+                        return result;
+                    }
 
                 case BracketExpansionNode ben:
                     return ExpandBrackets(ben, context);
@@ -1151,13 +1053,11 @@ public sealed class TickCompiler : ITickCompiler
             var values = ExpandBracketItems(node.Items);
             var results = new List<Anchor>();
 
-            foreach (var val in values)
-            {
+            foreach (var val in values) {
                 var padded = val.ToString(CultureInfo.InvariantCulture).PadLeft(2, '0');
                 var dateStr = node.Prefix + padded + node.Suffix;
 
-                if (node.NestedExpansion != null)
-                {
+                if (node.NestedExpansion != null) {
                     var nested = new BracketExpansionNode(
                         dateStr + node.NestedExpansion.Prefix,
                         node.NestedExpansion.Items,
@@ -1165,9 +1065,7 @@ public sealed class TickCompiler : ITickCompiler
                         node.NestedExpansion.NestedExpansion);
 
                     results.AddRange(ExpandBrackets(nested, context));
-                }
-                else
-                {
+                } else {
                     if (TryParseIso(dateStr, out var dto, out var isDateOnly))
                         results.Add(new Anchor(dto, isDateOnly));
                 }
@@ -1180,10 +1078,8 @@ public sealed class TickCompiler : ITickCompiler
         {
             var result = new List<int>();
 
-            foreach (var item in items)
-            {
-                switch (item)
-                {
+            foreach (var item in items) {
+                switch (item) {
                     case LiteralNode lit:
                         if (int.TryParse(lit.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n))
                             result.Add(n);
@@ -1202,8 +1098,7 @@ public sealed class TickCompiler : ITickCompiler
         private static Anchor ResolveVariable(string name, TickContext context)
         {
             var now = context.Now;
-            return name switch
-            {
+            return name switch {
                 "$now" => new Anchor(now, false),
                 "$today" => new Anchor(new DateTimeOffset(now.Date, now.Offset), true),
                 "$yesterday" => new Anchor(new DateTimeOffset(now.Date.AddDays(-1), now.Offset), true),
@@ -1248,12 +1143,10 @@ public sealed class TickCompiler : ITickCompiler
             if (inner is TimeSuffixNode tsn)
                 return ApplyTimeSuffixInTimezone(EvaluateAnchorsInTimezone(tsn.Inner, timezoneToken, context), tsn.TimeSuffix, resolution);
 
-            if (inner is VariableNode vn)
-            {
+            if (inner is VariableNode vn) {
                 var zonedNow = ConvertInstantToTimezone(now, resolution);
                 var localStart = new DateTime(zonedNow.Year, zonedNow.Month, zonedNow.Day, 0, 0, 0, DateTimeKind.Unspecified);
-                return vn.Name switch
-                {
+                return vn.Name switch {
                     "$now" => [new Anchor(zonedNow, false)],
                     "$today" => [new Anchor(ConvertLocalDateTimeToTimezone(localStart, resolution), true)],
                     "$yesterday" => [new Anchor(ConvertLocalDateTimeToTimezone(localStart.AddDays(-1), resolution), true)],
@@ -1275,13 +1168,11 @@ public sealed class TickCompiler : ITickCompiler
                 };
             }
 
-            if (inner is LiteralNode lit)
-            {
+            if (inner is LiteralNode lit) {
                 if (!TryParseIso(lit.Text, out var parsed, out var isDateOnly))
                     return [];
 
-                if (isDateOnly)
-                {
+                if (isDateOnly) {
                     var localMidnight = new DateTime(parsed.Year, parsed.Month, parsed.Day, 0, 0, 0, DateTimeKind.Unspecified);
                     var zonedMidnight = ConvertLocalDateTimeToTimezone(localMidnight, resolution);
                     return [new Anchor(zonedMidnight, true)];
@@ -1316,8 +1207,7 @@ public sealed class TickCompiler : ITickCompiler
                 return [];
 
             var result = new List<Anchor>(anchors.Count);
-            foreach (var anchor in anchors)
-            {
+            foreach (var anchor in anchors) {
                 var localDateTime = new DateTime(anchor.Value.Year, anchor.Value.Month, anchor.Value.Day, 0, 0, 0, DateTimeKind.Unspecified)
                     .Add(timeOfDay);
                 result.Add(new Anchor(ConvertLocalDateTimeToTimezone(localDateTime, resolution), false));
@@ -1333,8 +1223,7 @@ public sealed class TickCompiler : ITickCompiler
                 return false;
 
             var raw = timeSuffix[1..];
-            if (TimeSpan.TryParse(raw, CultureInfo.InvariantCulture, out var parsed))
-            {
+            if (TimeSpan.TryParse(raw, CultureInfo.InvariantCulture, out var parsed)) {
                 timeOfDay = parsed;
                 return true;
             }
@@ -1357,50 +1246,41 @@ public sealed class TickCompiler : ITickCompiler
                 tz = tz[1..];
 
             if (tz.Equals("UTC", StringComparison.OrdinalIgnoreCase) ||
-                tz.Equals("Z", StringComparison.OrdinalIgnoreCase))
-            {
+                tz.Equals("Z", StringComparison.OrdinalIgnoreCase)) {
                 resolution = new TimezoneResolution(null, TimeSpan.Zero, true);
                 return true;
             }
 
-            if (tz.Equals("local", StringComparison.OrdinalIgnoreCase))
-            {
+            if (tz.Equals("local", StringComparison.OrdinalIgnoreCase)) {
                 resolution = new TimezoneResolution(TimeZoneInfo.Local, default, false);
                 return true;
             }
 
-            if (Regex.IsMatch(tz, @"^[+-]\d{2}:\d{2}$", RegexOptions.CultureInvariant))
-            {
-                if (TimeSpan.TryParseExact(tz[1..], @"hh\:mm", CultureInfo.InvariantCulture, out var parsedColon))
-                {
+            if (Regex.IsMatch(tz, @"^[+-]\d{2}:\d{2}$", RegexOptions.CultureInvariant)) {
+                if (TimeSpan.TryParseExact(tz[1..], @"hh\:mm", CultureInfo.InvariantCulture, out var parsedColon)) {
                     var fixedOffset = tz[0] == '-' ? -parsedColon : parsedColon;
                     resolution = new TimezoneResolution(null, fixedOffset, true);
                     return true;
                 }
             }
 
-            if (Regex.IsMatch(tz, @"^[+-]\d{2}$", RegexOptions.CultureInvariant))
-            {
-                if (int.TryParse(tz, NumberStyles.Integer, CultureInfo.InvariantCulture, out var h))
-                {
+            if (Regex.IsMatch(tz, @"^[+-]\d{2}$", RegexOptions.CultureInvariant)) {
+                if (int.TryParse(tz, NumberStyles.Integer, CultureInfo.InvariantCulture, out var h)) {
                     resolution = new TimezoneResolution(null, TimeSpan.FromHours(h), true);
                     return true;
                 }
             }
 
-            if (Regex.IsMatch(tz, @"^[+-]\d{4}$", RegexOptions.CultureInvariant))
-            {
+            if (Regex.IsMatch(tz, @"^[+-]\d{4}$", RegexOptions.CultureInvariant)) {
                 var sign = tz[0] == '-' ? -1 : 1;
                 if (int.TryParse(tz.Substring(1, 2), NumberStyles.Integer, CultureInfo.InvariantCulture, out var hh) &&
-                    int.TryParse(tz.Substring(3, 2), NumberStyles.Integer, CultureInfo.InvariantCulture, out var mm))
-                {
+                    int.TryParse(tz.Substring(3, 2), NumberStyles.Integer, CultureInfo.InvariantCulture, out var mm)) {
                     resolution = new TimezoneResolution(null, new TimeSpan(sign * hh, sign * mm, 0), true);
                     return true;
                 }
             }
 
-            if (TryGetTimeZoneInfo(tz, out var zone))
-            {
+            if (TryGetTimeZoneInfo(tz, out var zone)) {
                 resolution = new TimezoneResolution(zone, default, false);
                 return true;
             }
@@ -1410,21 +1290,15 @@ public sealed class TickCompiler : ITickCompiler
 
         private static bool TryGetTimeZoneInfo(string zoneId, out TimeZoneInfo zone)
         {
-            try
-            {
+            try {
                 zone = TimeZoneInfo.FindSystemTimeZoneById(zoneId);
                 return true;
-            }
-            catch (TimeZoneNotFoundException) { }
-            catch (InvalidTimeZoneException) { }
+            } catch (TimeZoneNotFoundException) { } catch (InvalidTimeZoneException) { }
 
-            try
-            {
+            try {
                 zone = TZConvert.GetTimeZoneInfo(zoneId);
                 return true;
-            }
-            catch (TimeZoneNotFoundException) { }
-            catch (InvalidTimeZoneException) { }
+            } catch (TimeZoneNotFoundException) { } catch (InvalidTimeZoneException) { }
 
             zone = default!;
             return false;
@@ -1446,13 +1320,11 @@ public sealed class TickCompiler : ITickCompiler
             var zone = resolution.Zone!;
             var normalized = localDateTime;
 
-            while (zone.IsInvalidTime(normalized))
-            {
+            while (zone.IsInvalidTime(normalized)) {
                 normalized = normalized.AddMinutes(1);
             }
 
-            if (zone.IsAmbiguousTime(normalized))
-            {
+            if (zone.IsAmbiguousTime(normalized)) {
                 // Pick the smaller offset (post-transition / standard time).
                 var ambiguous = zone.GetAmbiguousTimeOffsets(normalized);
                 var preferred = ambiguous[0] <= ambiguous[1] ? ambiguous[0] : ambiguous[1];
@@ -1471,8 +1343,7 @@ public sealed class TickCompiler : ITickCompiler
             if (tIndex < 0)
                 return false;
 
-            for (int i = tIndex + 1; i < text.Length; i++)
-            {
+            for (int i = tIndex + 1; i < text.Length; i++) {
                 if (text[i] == '+' || text[i] == '-')
                     return true;
             }

@@ -1,4 +1,5 @@
 using FluentAssertions;
+
 using ItomoriLog.Core.Ingest;
 using ItomoriLog.Core.Model;
 
@@ -17,14 +18,12 @@ public class TimestampResolverTests
 
         public bool TryExtract(RawRecord raw, out DateTimeOffset timestamp)
         {
-            if (_extraction.ExplicitTimestamp.HasValue)
-            {
+            if (_extraction.ExplicitTimestamp.HasValue) {
                 timestamp = _extraction.ExplicitTimestamp.Value;
                 return true;
             }
 
-            if (_extraction.BareTimestamp.HasValue)
-            {
+            if (_extraction.BareTimestamp.HasValue) {
                 timestamp = new DateTimeOffset(_extraction.BareTimestamp.Value, TimeSpan.Zero);
                 return true;
             }

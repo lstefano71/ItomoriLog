@@ -40,22 +40,16 @@ public sealed class DuckLakeConnectionFactory : IDisposable
 
     private async Task EnsureDuckLakeExtensionAsync(DuckDBConnection connection, CancellationToken ct)
     {
-        try
-        {
+        try {
             using var cmd = connection.CreateCommand();
             cmd.CommandText = "LOAD ducklake;";
             await cmd.ExecuteNonQueryAsync(ct);
-        }
-        catch (Exception loadException)
-        {
-            try
-            {
+        } catch (Exception loadException) {
+            try {
                 using var cmd = connection.CreateCommand();
                 cmd.CommandText = "INSTALL ducklake; LOAD ducklake;";
                 await cmd.ExecuteNonQueryAsync(ct);
-            }
-            catch (Exception installException)
-            {
+            } catch (Exception installException) {
                 throw new InvalidOperationException(
                     $"DuckLake support is required for session storage but the extension could not be loaded or installed for '{_dbPath}'.",
                     new AggregateException(loadException, installException));
@@ -78,12 +72,9 @@ public sealed class DuckLakeConnectionFactory : IDisposable
             USE {CatalogAlias};
             """;
 
-        try
-        {
+        try {
             await cmd.ExecuteNonQueryAsync(ct);
-        }
-        catch (Exception ex)
-        {
+        } catch (Exception ex) {
             throw new InvalidOperationException(
                 $"Failed to attach DuckLake catalog '{_dbPath}' with data path '{_dataPath}'.",
                 ex);

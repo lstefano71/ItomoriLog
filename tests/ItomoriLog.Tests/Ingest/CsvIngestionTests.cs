@@ -1,4 +1,5 @@
 using FluentAssertions;
+
 using ItomoriLog.Core.Ingest;
 using ItomoriLog.Core.Ingest.Detectors;
 using ItomoriLog.Core.Ingest.Extractors;
@@ -207,8 +208,7 @@ public class CsvIngestionTests
     [Fact]
     public void CompositeTsExtractor_DateAndTime_Merges()
     {
-        var fields = new Dictionary<string, string>
-        {
+        var fields = new Dictionary<string, string> {
             ["Date"] = "2024-03-15",
             ["Time"] = "10:30:45",
             ["Message"] = "Hello"
@@ -225,8 +225,7 @@ public class CsvIngestionTests
     [Fact]
     public void CompositeTsExtractor_SingleColumn_Works()
     {
-        var fields = new Dictionary<string, string>
-        {
+        var fields = new Dictionary<string, string> {
             ["Timestamp"] = "2024-03-15T10:30:45Z",
             ["Message"] = "Hello"
         };
@@ -270,8 +269,7 @@ public class CsvIngestionTests
         result.Extractor.Description.Should().Contain("Column0");
         result.Extractor.Description.Should().Contain("Column1");
 
-        var fields = new Dictionary<string, string>
-        {
+        var fields = new Dictionary<string, string> {
             ["Column0"] = "2023-02-28",
             ["Column1"] = "13:43:56.961Z",
             ["Column2"] = "FILE9",
@@ -312,10 +310,8 @@ public class CsvIngestionTests
         using var readReader = new CsvRecordReader(new StringReader(csv), boundary);
         var rows = new List<LogRow>();
         long idx = 0;
-        while (readReader.TryReadNext(out var rec))
-        {
-            if (detection.Extractor.TryExtract(rec, out var ts))
-            {
+        while (readReader.TryReadNext(out var rec)) {
+            if (detection.Extractor.TryExtract(rec, out var ts)) {
                 rows.Add(new LogRow(
                     TimestampUtc: ts.ToUniversalTime(),
                     TimestampBasis: TimeBasis.Local,
@@ -338,8 +334,7 @@ public class CsvIngestionTests
         // Insert into DuckDB
         var tempDir = Path.Combine(Path.GetTempPath(), $"itomorilog_csv_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
-        try
-        {
+        try {
             var dbPath = Path.Combine(tempDir, "test.duckdb");
             using var factory = new DuckLakeConnectionFactory(dbPath);
             var conn = await factory.GetConnectionAsync();
@@ -352,9 +347,7 @@ public class CsvIngestionTests
             cmd.CommandText = "SELECT COUNT(*) FROM logs";
             var count = await cmd.ExecuteScalarAsync();
             Convert.ToInt64(count).Should().Be(10);
-        }
-        finally
-        {
+        } finally {
             try { Directory.Delete(tempDir, recursive: true); } catch { }
         }
     }

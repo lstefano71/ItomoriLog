@@ -1,5 +1,6 @@
-using System.Text.Json;
 using ItomoriLog.Core.Ingest.Extractors;
+
+using System.Text.Json;
 
 namespace ItomoriLog.Core.Ingest.Detectors;
 
@@ -33,8 +34,7 @@ public sealed class NdjsonFormatDetector : IFormatDetector
         var parsedObjects = new List<Dictionary<string, string>>();
         string? line;
 
-        while ((line = reader.ReadLine()) is not null && lines.Count < MaxSniffLines)
-        {
+        while ((line = reader.ReadLine()) is not null && lines.Count < MaxSniffLines) {
             if (string.IsNullOrWhiteSpace(line))
                 continue;
 
@@ -42,26 +42,21 @@ public sealed class NdjsonFormatDetector : IFormatDetector
             if (!LooksLikeJsonObject(line))
                 continue;
 
-            try
-            {
+            try {
                 using var doc = JsonDocument.Parse(line);
                 if (doc.RootElement.ValueKind != JsonValueKind.Object)
                     continue;
 
                 var fields = new Dictionary<string, string>();
-                foreach (var prop in doc.RootElement.EnumerateObject())
-                {
-                    fields[prop.Name] = prop.Value.ValueKind switch
-                    {
+                foreach (var prop in doc.RootElement.EnumerateObject()) {
+                    fields[prop.Name] = prop.Value.ValueKind switch {
                         JsonValueKind.String => prop.Value.GetString() ?? "",
                         JsonValueKind.Number => prop.Value.GetRawText(),
                         _ => prop.Value.GetRawText(),
                     };
                 }
                 parsedObjects.Add(fields);
-            }
-            catch
-            {
+            } catch {
                 // Not valid JSON — will lower parse rate
             }
         }
@@ -83,10 +78,8 @@ public sealed class NdjsonFormatDetector : IFormatDetector
 
         // Score timestamp extraction
         int tsExtracted = 0;
-        if (tsField is not null)
-        {
-            foreach (var obj in parsedObjects)
-            {
+        if (tsField is not null) {
+            foreach (var obj in parsedObjects) {
                 var fieldDict = obj as IReadOnlyDictionary<string, string>;
                 var raw = new RawRecord("", "", 0, 0, fieldDict);
                 if (extractor.TryExtract(raw, out _))
@@ -114,26 +107,21 @@ public sealed class NdjsonFormatDetector : IFormatDetector
 
         // Collect all field names across objects
         var fieldCounts = new Dictionary<string, int>();
-        foreach (var obj in objects)
-        {
-            foreach (var key in obj.Keys)
-            {
+        foreach (var obj in objects) {
+            foreach (var key in obj.Keys) {
                 fieldCounts[key] = fieldCounts.GetValueOrDefault(key) + 1;
             }
         }
 
         // Check well-known timestamp field names in priority order
-        foreach (var tsName in TimestampFieldNames)
-        {
-            if (fieldCounts.ContainsKey(tsName))
-            {
+        foreach (var tsName in TimestampFieldNames) {
+            if (fieldCounts.ContainsKey(tsName)) {
                 // Validate that this field actually contains parseable timestamps
                 var extractor = new JsonTimestampExtractor(tsName);
                 int success = 0;
                 int checks = Math.Min(objects.Count, 10);
 
-                for (int i = 0; i < checks; i++)
-                {
+                for (int i = 0; i < checks; i++) {
                     var raw = new RawRecord("", "", 0, 0, objects[i]);
                     if (extractor.TryExtract(raw, out _))
                         success++;

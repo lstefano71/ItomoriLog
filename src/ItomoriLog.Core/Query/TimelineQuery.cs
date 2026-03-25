@@ -1,5 +1,5 @@
-using System.Text;
 using DuckDB.NET.Data;
+
 using ItomoriLog.Core.Storage;
 
 namespace ItomoriLog.Core.Query;
@@ -44,33 +44,27 @@ public sealed class TimelineQuery
         var whereClauses = new List<string>();
         string? setupSql = null;
 
-        if (startUtc.HasValue)
-        {
+        if (startUtc.HasValue) {
             parameters.Add(startUtc.Value.UtcDateTime);
             whereClauses.Add($"timestamp_utc >= ${parameters.Count}");
         }
-        if (endUtc.HasValue)
-        {
+        if (endUtc.HasValue) {
             parameters.Add(endUtc.Value.UtcDateTime);
             whereClauses.Add($"timestamp_utc < ${parameters.Count}");
         }
 
-        if (levels is { Count: > 0 })
-        {
+        if (levels is { Count: > 0 }) {
             var placeholders = new List<string>();
-            foreach (var level in levels)
-            {
+            foreach (var level in levels) {
                 parameters.Add(level);
                 placeholders.Add($"${parameters.Count}");
             }
             whereClauses.Add($"level IN ({string.Join(", ", placeholders)})");
         }
 
-        if (sourceIds is { Count: > 0 })
-        {
+        if (sourceIds is { Count: > 0 }) {
             var placeholders = new List<string>();
-            foreach (var sourceId in sourceIds)
-            {
+            foreach (var sourceId in sourceIds) {
                 parameters.Add(sourceId);
                 placeholders.Add($"${parameters.Count}");
             }
@@ -84,11 +78,9 @@ public sealed class TimelineQuery
         var intervalStr = FormatInterval(binWidth);
         var matchedCountSql = "CAST(0 AS BIGINT) AS matched_cnt";
 
-        if (matchFilter is not null)
-        {
+        if (matchFilter is not null) {
             var filterEmission = _filterBuilder.Build(matchFilter);
-            if (!string.IsNullOrWhiteSpace(filterEmission.WhereSql))
-            {
+            if (!string.IsNullOrWhiteSpace(filterEmission.WhereSql)) {
                 var rebasedWhere = QueryPlanner.RebaseParameterIndices(filterEmission.WhereSql, parameters.Count);
                 foreach (var parameter in filterEmission.Parameters)
                     parameters.Add(parameter);
@@ -111,8 +103,7 @@ public sealed class TimelineQuery
             """;
 
         var conn = await _factory.GetConnectionAsync(ct);
-        if (setupSql is not null)
-        {
+        if (setupSql is not null) {
             using var setupCmd = conn.CreateCommand();
             setupCmd.CommandText = setupSql;
             await setupCmd.ExecuteNonQueryAsync(ct);
@@ -126,8 +117,7 @@ public sealed class TimelineQuery
         var bins = new List<TimelineBin>();
         using var reader = await cmd.ExecuteReaderAsync(ct);
 
-        while (await reader.ReadAsync(ct))
-        {
+        while (await reader.ReadAsync(ct)) {
             var binStart = new DateTimeOffset(reader.GetDateTime(0), TimeSpan.Zero);
             var count = reader.GetInt64(1);
             var dominantLevel = reader.IsDBNull(2) ? null : reader.GetString(2);
@@ -155,22 +145,18 @@ public sealed class TimelineQuery
         var parameters = new List<object>();
         var whereClauses = new List<string>();
 
-        if (levels is { Count: > 0 })
-        {
+        if (levels is { Count: > 0 }) {
             var placeholders = new List<string>();
-            foreach (var level in levels)
-            {
+            foreach (var level in levels) {
                 parameters.Add(level);
                 placeholders.Add($"${parameters.Count}");
             }
             whereClauses.Add($"level IN ({string.Join(", ", placeholders)})");
         }
 
-        if (sourceIds is { Count: > 0 })
-        {
+        if (sourceIds is { Count: > 0 }) {
             var placeholders = new List<string>();
-            foreach (var sourceId in sourceIds)
-            {
+            foreach (var sourceId in sourceIds) {
                 parameters.Add(sourceId);
                 placeholders.Add($"${parameters.Count}");
             }
@@ -190,8 +176,7 @@ public sealed class TimelineQuery
             cmd.Parameters.Add(new DuckDBParameter { Value = p });
 
         using var reader = await cmd.ExecuteReaderAsync(ct);
-        if (await reader.ReadAsync(ct) && !reader.IsDBNull(0) && !reader.IsDBNull(1))
-        {
+        if (await reader.ReadAsync(ct) && !reader.IsDBNull(0) && !reader.IsDBNull(1)) {
             var min = new DateTimeOffset(reader.GetDateTime(0), TimeSpan.Zero);
             var max = new DateTimeOffset(reader.GetDateTime(1), TimeSpan.Zero);
             return (min, max);

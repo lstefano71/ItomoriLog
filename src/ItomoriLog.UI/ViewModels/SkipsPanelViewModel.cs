@@ -1,10 +1,13 @@
+using DuckDB.NET.Data;
+
+using ItomoriLog.Core.Model;
+using ItomoriLog.Core.Query;
+
+using ReactiveUI;
+
 using System.Collections.ObjectModel;
 using System.Reactive;
 using System.Reactive.Linq;
-using DuckDB.NET.Data;
-using ReactiveUI;
-using ItomoriLog.Core.Model;
-using ItomoriLog.Core.Query;
 
 namespace ItomoriLog.UI.ViewModels;
 
@@ -27,29 +30,24 @@ public class SkipsPanelViewModel : ViewModelBase
         ReasonFilterOptions = [null, .. Enum.GetValues<SkipReasonCode>()];
     }
 
-    public ObservableCollection<SkipGroupViewModel> SkipGroups
-    {
+    public ObservableCollection<SkipGroupViewModel> SkipGroups {
         get => _skipGroups;
         set => this.RaiseAndSetIfChanged(ref _skipGroups, value);
     }
 
-    public SkipSegmentViewModel? SelectedSkip
-    {
+    public SkipSegmentViewModel? SelectedSkip {
         get => _selectedSkip;
         set => this.RaiseAndSetIfChanged(ref _selectedSkip, value);
     }
 
-    public long TotalSkipCount
-    {
+    public long TotalSkipCount {
         get => _totalSkipCount;
         set => this.RaiseAndSetIfChanged(ref _totalSkipCount, value);
     }
 
-    public SkipReasonCode? SelectedReasonFilter
-    {
+    public SkipReasonCode? SelectedReasonFilter {
         get => _selectedReasonFilter;
-        set
-        {
+        set {
             this.RaiseAndSetIfChanged(ref _selectedReasonFilter, value);
             Observable.StartAsync(LoadSkipsAsync).Subscribe();
         }
@@ -70,8 +68,7 @@ public class SkipsPanelViewModel : ViewModelBase
         var vms = new ObservableCollection<SkipGroupViewModel>();
         long total = 0;
 
-        foreach (var group in groups)
-        {
+        foreach (var group in groups) {
             var segmentVms = group.Segments
                 .Select(s => new SkipSegmentViewModel(s, group.SourcePath))
                 .ToList();

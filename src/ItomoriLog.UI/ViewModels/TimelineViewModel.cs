@@ -1,10 +1,11 @@
-using System.Collections.ObjectModel;
+using ItomoriLog.Core.Query;
+using ItomoriLog.Core.Storage;
+
+using ReactiveUI;
+
 using System.Globalization;
 using System.Reactive;
 using System.Reactive.Linq;
-using ReactiveUI;
-using ItomoriLog.Core.Query;
-using ItomoriLog.Core.Storage;
 
 namespace ItomoriLog.UI.ViewModels;
 
@@ -39,13 +40,11 @@ public class TimelineViewModel : ViewModelBase
 
         LoadCoarseCommand = ReactiveCommand.CreateFromTask(LoadCoarseBinsAsync);
         RefineCommand = ReactiveCommand.CreateFromTask(RefineVisibleAsync);
-        ZoomInCommand = ReactiveCommand.CreateFromTask(async () =>
-        {
+        ZoomInCommand = ReactiveCommand.CreateFromTask(async () => {
             Zoom(1.5);
             await RefineVisibleAsync();
         });
-        ZoomOutCommand = ReactiveCommand.CreateFromTask(async () =>
-        {
+        ZoomOutCommand = ReactiveCommand.CreateFromTask(async () => {
             Zoom(1.0 / 1.5);
             await RefineVisibleAsync();
         });
@@ -55,82 +54,67 @@ public class TimelineViewModel : ViewModelBase
 
     // --- Properties ---
 
-    public TimelineBin[] Bins
-    {
+    public TimelineBin[] Bins {
         get => _bins;
-        set
-        {
+        set {
             this.RaiseAndSetIfChanged(ref _bins, value);
             RaiseAxisProperties();
         }
     }
 
-    public DateTimeOffset? SessionStart
-    {
+    public DateTimeOffset? SessionStart {
         get => _sessionStart;
         set => this.RaiseAndSetIfChanged(ref _sessionStart, value);
     }
 
-    public DateTimeOffset? SessionEnd
-    {
+    public DateTimeOffset? SessionEnd {
         get => _sessionEnd;
         set => this.RaiseAndSetIfChanged(ref _sessionEnd, value);
     }
 
-    public DateTimeOffset? VisibleStart
-    {
+    public DateTimeOffset? VisibleStart {
         get => _visibleStart;
-        set
-        {
+        set {
             this.RaiseAndSetIfChanged(ref _visibleStart, value);
             RaiseAxisProperties();
         }
     }
 
-    public DateTimeOffset? VisibleEnd
-    {
+    public DateTimeOffset? VisibleEnd {
         get => _visibleEnd;
-        set
-        {
+        set {
             this.RaiseAndSetIfChanged(ref _visibleEnd, value);
             RaiseAxisProperties();
         }
     }
 
-    public DateTimeOffset? SelectedStart
-    {
+    public DateTimeOffset? SelectedStart {
         get => _selectedStart;
-        set
-        {
+        set {
             this.RaiseAndSetIfChanged(ref _selectedStart, value);
             RaiseSelectionStateProperties();
         }
     }
 
-    public DateTimeOffset? SelectedEnd
-    {
+    public DateTimeOffset? SelectedEnd {
         get => _selectedEnd;
-        set
-        {
+        set {
             this.RaiseAndSetIfChanged(ref _selectedEnd, value);
             RaiseSelectionStateProperties();
         }
     }
 
-    public TimeSpan CurrentBinWidth
-    {
+    public TimeSpan CurrentBinWidth {
         get => _currentBinWidth;
         set => this.RaiseAndSetIfChanged(ref _currentBinWidth, value);
     }
 
-    public bool IsLoading
-    {
+    public bool IsLoading {
         get => _isLoading;
         set => this.RaiseAndSetIfChanged(ref _isLoading, value);
     }
 
-    public bool HasActiveMatchFilter
-    {
+    public bool HasActiveMatchFilter {
         get => _hasActiveMatchFilter;
         private set => this.RaiseAndSetIfChanged(ref _hasActiveMatchFilter, value);
     }
@@ -186,8 +170,7 @@ public class TimelineViewModel : ViewModelBase
     {
         var ct = ResetCancellation();
         IsLoading = true;
-        try
-        {
+        try {
             var previousSessionStart = SessionStart;
             var previousSessionEnd = SessionEnd;
             var previousVisibleStart = VisibleStart;
@@ -196,8 +179,7 @@ public class TimelineViewModel : ViewModelBase
             var previousSelectedEnd = SelectedEnd;
 
             var range = await _query.GetTimeRangeAsync(ct: ct);
-            if (range is null)
-            {
+            if (range is null) {
                 Bins = [];
                 SessionStart = null;
                 SessionEnd = null;
@@ -224,16 +206,13 @@ public class TimelineViewModel : ViewModelBase
             if (!preserveViewport
                 || !previousVisibleStart.HasValue
                 || !previousVisibleEnd.HasValue
-                || wasShowingFullSession)
-            {
+                || wasShowingFullSession) {
                 VisibleStart = SessionStart;
                 VisibleEnd = SessionEnd;
 
                 var totalSpan = SessionEnd.Value - SessionStart.Value;
                 CurrentBinWidth = TimelineQuery.ChooseCoarseBinWidth(totalSpan);
-            }
-            else
-            {
+            } else {
                 var clampedVisibleStart = previousVisibleStart.Value < newSessionStart
                     ? newSessionStart
                     : previousVisibleStart.Value;
@@ -241,23 +220,19 @@ public class TimelineViewModel : ViewModelBase
                     ? newSessionEnd
                     : previousVisibleEnd.Value;
 
-                if (clampedVisibleEnd <= clampedVisibleStart)
-                {
+                if (clampedVisibleEnd <= clampedVisibleStart) {
                     VisibleStart = SessionStart;
                     VisibleEnd = SessionEnd;
                     var totalSpan = SessionEnd.Value - SessionStart.Value;
                     CurrentBinWidth = TimelineQuery.ChooseCoarseBinWidth(totalSpan);
-                }
-                else
-                {
+                } else {
                     VisibleStart = clampedVisibleStart;
                     VisibleEnd = clampedVisibleEnd;
                     CurrentBinWidth = TimelineQuery.ChooseFineBinWidth(VisibleEnd.Value - VisibleStart.Value);
                 }
             }
 
-            if (previousSelectedStart.HasValue && previousSelectedEnd.HasValue)
-            {
+            if (previousSelectedStart.HasValue && previousSelectedEnd.HasValue) {
                 var clampedSelectedStart = previousSelectedStart.Value < newSessionStart
                     ? newSessionStart
                     : previousSelectedStart.Value;
@@ -265,22 +240,16 @@ public class TimelineViewModel : ViewModelBase
                     ? newSessionEnd
                     : previousSelectedEnd.Value;
 
-                if (clampedSelectedEnd > clampedSelectedStart)
-                {
+                if (clampedSelectedEnd > clampedSelectedStart) {
                     SelectedStart = clampedSelectedStart;
                     SelectedEnd = clampedSelectedEnd;
-                }
-                else
-                {
+                } else {
                     ClearSelection();
                 }
             }
 
             await LoadVisibleBinsAsync(ct);
-        }
-        catch (OperationCanceledException) { }
-        finally
-        {
+        } catch (OperationCanceledException) { } finally {
             IsLoading = false;
         }
     }
@@ -294,16 +263,12 @@ public class TimelineViewModel : ViewModelBase
 
         var ct = ResetCancellation();
         IsLoading = true;
-        try
-        {
+        try {
             var visibleSpan = VisibleEnd.Value - VisibleStart.Value;
             CurrentBinWidth = TimelineQuery.ChooseFineBinWidth(visibleSpan);
 
             await LoadVisibleBinsAsync(ct);
-        }
-        catch (OperationCanceledException) { }
-        finally
-        {
+        } catch (OperationCanceledException) { } finally {
             IsLoading = false;
         }
     }
@@ -347,13 +312,11 @@ public class TimelineViewModel : ViewModelBase
         var newStart = VisibleStart.Value + delta;
         var newEnd = VisibleEnd.Value + delta;
 
-        if (SessionStart.HasValue && newStart < SessionStart.Value)
-        {
+        if (SessionStart.HasValue && newStart < SessionStart.Value) {
             newStart = SessionStart.Value;
             newEnd = newStart + span;
         }
-        if (SessionEnd.HasValue && newEnd > SessionEnd.Value)
-        {
+        if (SessionEnd.HasValue && newEnd > SessionEnd.Value) {
             newEnd = SessionEnd.Value;
             newStart = newEnd - span;
         }
@@ -422,21 +385,16 @@ public class TimelineViewModel : ViewModelBase
 
         var ct = ResetCancellation();
         IsLoading = true;
-        try
-        {
+        try {
             await LoadVisibleBinsAsync(ct);
-        }
-        catch (OperationCanceledException) { }
-        finally
-        {
+        } catch (OperationCanceledException) { } finally {
             IsLoading = false;
         }
     }
 
     private CancellationToken ResetCancellation()
     {
-        lock (_ctsLock)
-        {
+        lock (_ctsLock) {
             _pendingCts?.Cancel();
             _pendingCts?.Dispose();
             _pendingCts = new CancellationTokenSource();
@@ -490,8 +448,7 @@ public class TimelineViewModel : ViewModelBase
             return string.Empty;
 
         var visibleSpan = VisibleEnd.Value - VisibleStart.Value;
-        return visibleSpan switch
-        {
+        return visibleSpan switch {
             _ when visibleSpan <= TimeSpan.FromHours(6) => timestamp.Value.ToString("HH:mm:ss"),
             _ when visibleSpan <= TimeSpan.FromDays(2) => timestamp.Value.ToString("MM-dd HH:mm"),
             _ when visibleSpan <= TimeSpan.FromDays(45) => timestamp.Value.ToString("MM-dd"),

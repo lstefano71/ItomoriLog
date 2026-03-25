@@ -1,9 +1,10 @@
+using DuckDB.NET.Data;
+
+using ItomoriLog.Core.Query;
+
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
-using DuckDB.NET.Data;
-using ItomoriLog.Core.Model;
-using ItomoriLog.Core.Query;
 
 namespace ItomoriLog.Core.Export;
 
@@ -47,8 +48,7 @@ public sealed class ExportService
         IProgress<ExportProgress>? progress = null,
         CancellationToken ct = default)
     {
-        return options.Format switch
-        {
+        return options.Format switch {
             ExportFormat.Csv => await ExportCsvAsync(options, progress, ct),
             ExportFormat.JsonLines => await ExportJsonLinesAsync(options, progress, ct),
             ExportFormat.Parquet => await ExportParquetAsync(options, progress, ct),
@@ -83,19 +83,14 @@ public sealed class ExportService
         await writer.WriteLineAsync("timestamp_utc,timestamp_basis,timestamp_effective_offset_minutes,timestamp_original,logical_source_id,source_path,physical_file_id,segment_id,ingest_run_id,record_index,level,message,fields");
 
         long rowsWritten = 0;
-        while (await reader.ReadAsync(ct))
-        {
+        while (await reader.ReadAsync(ct)) {
             ct.ThrowIfCancellationRequested();
             var sb = new StringBuilder();
-            for (int i = 0; i < reader.FieldCount; i++)
-            {
+            for (int i = 0; i < reader.FieldCount; i++) {
                 if (i > 0) sb.Append(',');
-                if (reader.IsDBNull(i))
-                {
+                if (reader.IsDBNull(i)) {
                     // empty field
-                }
-                else
-                {
+                } else {
                     var val = reader.GetValue(i);
                     var str = val is DateTime dt
                         ? dt.ToString("O", CultureInfo.InvariantCulture)
@@ -141,12 +136,10 @@ public sealed class ExportService
         var jsonOptions = new JsonWriterOptions { Indented = false };
         long rowsWritten = 0;
 
-        while (await reader.ReadAsync(ct))
-        {
+        while (await reader.ReadAsync(ct)) {
             ct.ThrowIfCancellationRequested();
             using var ms = new MemoryStream();
-            using (var jsonWriter = new Utf8JsonWriter(ms, jsonOptions))
-            {
+            using (var jsonWriter = new Utf8JsonWriter(ms, jsonOptions)) {
                 jsonWriter.WriteStartObject();
                 WriteJsonField(jsonWriter, reader, 0, "timestamp_utc");
                 WriteJsonField(jsonWriter, reader, 1, "timestamp_basis");
@@ -240,62 +233,51 @@ public sealed class ExportService
         var clauses = new List<string>();
         var parameters = new List<DuckDBParameter>();
 
-        if (filter.StartUtc.HasValue)
-        {
+        if (filter.StartUtc.HasValue) {
             parameters.Add(new DuckDBParameter { Value = filter.StartUtc.Value.UtcDateTime });
             clauses.Add($"timestamp_utc >= ${parameters.Count}");
         }
 
-        if (filter.EndUtc.HasValue)
-        {
+        if (filter.EndUtc.HasValue) {
             parameters.Add(new DuckDBParameter { Value = filter.EndUtc.Value.UtcDateTime });
             clauses.Add($"timestamp_utc < ${parameters.Count}");
         }
 
-        if (filter.SourceIds is { Count: > 0 })
-        {
+        if (filter.SourceIds is { Count: > 0 }) {
             var placeholders = new List<string>();
-            foreach (var sourceId in filter.SourceIds)
-            {
+            foreach (var sourceId in filter.SourceIds) {
                 parameters.Add(new DuckDBParameter { Value = sourceId });
                 placeholders.Add($"${parameters.Count}");
             }
             clauses.Add($"logical_source_id IN ({string.Join(", ", placeholders)})");
         }
-        if (filter.ExcludedSourceIds is { Count: > 0 })
-        {
+        if (filter.ExcludedSourceIds is { Count: > 0 }) {
             var placeholders = new List<string>();
-            foreach (var sourceId in filter.ExcludedSourceIds)
-            {
+            foreach (var sourceId in filter.ExcludedSourceIds) {
                 parameters.Add(new DuckDBParameter { Value = sourceId });
                 placeholders.Add($"${parameters.Count}");
             }
             clauses.Add($"logical_source_id NOT IN ({string.Join(", ", placeholders)})");
         }
 
-        if (filter.Levels is { Count: > 0 })
-        {
+        if (filter.Levels is { Count: > 0 }) {
             var placeholders = new List<string>();
-            foreach (var level in filter.Levels)
-            {
+            foreach (var level in filter.Levels) {
                 parameters.Add(new DuckDBParameter { Value = level });
                 placeholders.Add($"${parameters.Count}");
             }
             clauses.Add($"level IN ({string.Join(", ", placeholders)})");
         }
-        if (filter.ExcludedLevels is { Count: > 0 })
-        {
+        if (filter.ExcludedLevels is { Count: > 0 }) {
             var placeholders = new List<string>();
-            foreach (var level in filter.ExcludedLevels)
-            {
+            foreach (var level in filter.ExcludedLevels) {
                 parameters.Add(new DuckDBParameter { Value = level });
                 placeholders.Add($"${parameters.Count}");
             }
             clauses.Add($"(level IS NULL OR level NOT IN ({string.Join(", ", placeholders)}))");
         }
 
-        if (!string.IsNullOrWhiteSpace(filter.TextSearch))
-        {
+        if (!string.IsNullOrWhiteSpace(filter.TextSearch)) {
             parameters.Add(new DuckDBParameter { Value = $"%{filter.TextSearch}%" });
             clauses.Add($"message ILIKE ${parameters.Count}");
         }
@@ -315,15 +297,13 @@ public sealed class ExportService
 
     private static void WriteJsonField(Utf8JsonWriter writer, System.Data.Common.DbDataReader reader, int ordinal, string name)
     {
-        if (reader.IsDBNull(ordinal))
-        {
+        if (reader.IsDBNull(ordinal)) {
             writer.WriteNull(name);
             return;
         }
 
         var val = reader.GetValue(ordinal);
-        switch (val)
-        {
+        switch (val) {
             case DateTime dt:
                 writer.WriteString(name, dt.ToString("O", CultureInfo.InvariantCulture));
                 break;
@@ -338,14 +318,11 @@ public sealed class ExportService
                 break;
             case string s when name == "fields":
                 // Embed as raw JSON if it's valid JSON, otherwise as string
-                try
-                {
+                try {
                     using var doc = JsonDocument.Parse(s);
                     writer.WritePropertyName(name);
                     doc.RootElement.WriteTo(writer);
-                }
-                catch
-                {
+                } catch {
                     writer.WriteString(name, s);
                 }
                 break;
@@ -380,8 +357,7 @@ public sealed class ExportService
     private static async Task WriteCsvMetadataAsync(ExportOptions options, long rowsWritten, CancellationToken ct)
     {
         var metadataPath = GetCsvMetadataPath(options.OutputPath);
-        var metadata = new
-        {
+        var metadata = new {
             format = options.Format.ToString(),
             scope = options.Scope.ToString(),
             exported_utc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),

@@ -1,8 +1,9 @@
 using FluentAssertions;
+
+using ItomoriLog.Core.Ingest;
 using ItomoriLog.Core.Model;
 using ItomoriLog.Core.Query;
 using ItomoriLog.Core.Storage;
-using ItomoriLog.Core.Ingest;
 
 namespace ItomoriLog.Tests.Query;
 
@@ -31,8 +32,7 @@ public class QueryIntegrationTests : IDisposable
         var inserter = new LogBatchInserter(conn);
         var rows = new List<LogRow>();
 
-        for (int i = 0; i < count; i++)
-        {
+        for (int i = 0; i < count; i++) {
             rows.Add(new LogRow(
                 TimestampUtc: baseTs.AddSeconds(i),
                 TimestampBasis: TimeBasis.Utc,
@@ -44,8 +44,7 @@ public class QueryIntegrationTests : IDisposable
                 SegmentId: $"seg-{i % 2}",
                 IngestRunId: "run-1",
                 RecordIndex: i,
-                Level: (i % 4) switch
-                {
+                Level: (i % 4) switch {
                     0 => "ERROR",
                     1 => "WARN",
                     2 => "INFO",
@@ -71,8 +70,7 @@ public class QueryIntegrationTests : IDisposable
         PageCursor? cursor = null;
 
         // Page through all records
-        for (int pageNum = 0; pageNum < 10; pageNum++)
-        {
+        for (int pageNum = 0; pageNum < 10; pageNum++) {
             var result = await pager.FetchPageAsync(FilterState.Empty, cursor);
             allRows.AddRange(result.Rows);
 
@@ -84,8 +82,7 @@ public class QueryIntegrationTests : IDisposable
 
         allRows.Should().HaveCount(100);
         // Verify ordering
-        for (int i = 1; i < allRows.Count; i++)
-        {
+        for (int i = 1; i < allRows.Count; i++) {
             allRows[i].TimestampUtc.Should().BeOnOrAfter(allRows[i - 1].TimestampUtc);
         }
     }
@@ -114,8 +111,7 @@ public class QueryIntegrationTests : IDisposable
 
         var planner = new QueryPlanner();
         var pager = new RowPager(_factory, planner, pageSize: 200);
-        var filter = new FilterState
-        {
+        var filter = new FilterState {
             StartUtc = baseTs.AddSeconds(10),
             EndUtc = baseTs.AddSeconds(20)
         };
@@ -123,8 +119,7 @@ public class QueryIntegrationTests : IDisposable
         var result = await pager.FetchPageAsync(filter);
 
         result.Rows.Should().HaveCount(10); // seconds 10..19
-        result.Rows.Should().AllSatisfy(r =>
-        {
+        result.Rows.Should().AllSatisfy(r => {
             r.TimestampUtc.Should().BeOnOrAfter(baseTs.AddSeconds(10));
             r.TimestampUtc.Should().BeBefore(baseTs.AddSeconds(20));
         });
@@ -198,8 +193,7 @@ public class QueryIntegrationTests : IDisposable
 
         var planner = new QueryPlanner();
         var pager = new RowPager(_factory, planner, pageSize: 10);
-        var filter = new FilterState
-        {
+        var filter = new FilterState {
             Levels = ["ERROR"],
             SourceIds = ["source-0"]
         };
@@ -207,8 +201,7 @@ public class QueryIntegrationTests : IDisposable
         var allRows = new List<LogRow>();
         PageCursor? cursor = null;
 
-        for (int pageNum = 0; pageNum < 50; pageNum++)
-        {
+        for (int pageNum = 0; pageNum < 50; pageNum++) {
             var result = await pager.FetchPageAsync(filter, cursor);
             allRows.AddRange(result.Rows);
 
@@ -221,8 +214,7 @@ public class QueryIntegrationTests : IDisposable
         // ERROR = every 4th row (i%4==0), source-0 = every 3rd row (i%3==0)
         // Both: i%12==0 → rows 0, 12, 24, ..., 192 = 17 rows
         allRows.Should().HaveCount(17);
-        allRows.Should().AllSatisfy(r =>
-        {
+        allRows.Should().AllSatisfy(r => {
             r.Level.Should().Be("ERROR");
             r.LogicalSourceId.Should().Be("source-0");
         });
@@ -236,8 +228,7 @@ public class QueryIntegrationTests : IDisposable
 
         var planner = new QueryPlanner();
         var pager = new RowPager(_factory, planner, pageSize: 200);
-        var filter = new FilterState
-        {
+        var filter = new FilterState {
             TextSearchQuery = new MessageAndNode(
                 new MessageTermNode("Event"),
                 new MessageOrNode(new MessageTermNode("#1"), new MessageTermNode("#2")))
@@ -246,8 +237,7 @@ public class QueryIntegrationTests : IDisposable
         var result = await pager.FetchPageAsync(filter);
 
         result.Rows.Should().NotBeEmpty();
-        result.Rows.Should().AllSatisfy(r =>
-        {
+        result.Rows.Should().AllSatisfy(r => {
             r.Message.Should().Contain("Event");
             (r.Message.Contains("#1", StringComparison.OrdinalIgnoreCase)
                 || r.Message.Contains("#2", StringComparison.OrdinalIgnoreCase)).Should().BeTrue();

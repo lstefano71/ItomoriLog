@@ -1,8 +1,10 @@
+using DuckDB.NET.Data;
+
 using FluentAssertions;
+
 using ItomoriLog.Core.Ingest;
 using ItomoriLog.Core.Model;
 using ItomoriLog.Core.Storage;
-using DuckDB.NET.Data;
 
 namespace ItomoriLog.Tests.Ingest;
 
@@ -175,8 +177,7 @@ public class ReingestExtendedTests : IDisposable
 
         // Replace with NDJSON content
         var ndjsonLines = Enumerable.Range(0, 8).Select(i =>
-            System.Text.Json.JsonSerializer.Serialize(new
-            {
+            System.Text.Json.JsonSerializer.Serialize(new {
                 timestamp = baseTime.AddSeconds(i).ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
                 level = "WARN",
                 message = $"NDJSON message {i}"

@@ -1,5 +1,6 @@
-using System.Reactive;
 using ReactiveUI;
+
+using System.Reactive;
 
 namespace ItomoriLog.UI.ViewModels;
 
@@ -17,8 +18,7 @@ public class FacetItemViewModel : ViewModelBase
         Value = value;
         Count = count;
         _onStateChanged = onStateChanged;
-        CycleStateCommand = ReactiveCommand.Create(() =>
-        {
+        CycleStateCommand = ReactiveCommand.Create(() => {
             CycleState();
             _onStateChanged?.Invoke(this);
         });
@@ -26,14 +26,12 @@ public class FacetItemViewModel : ViewModelBase
 
     public string Value { get; }
 
-    public long Count
-    {
+    public long Count {
         get => _count;
         set => this.RaiseAndSetIfChanged(ref _count, value);
     }
 
-    public FacetSelectionState State
-    {
+    public FacetSelectionState State {
         get => _state;
         set => this.RaiseAndSetIfChanged(ref _state, value);
     }
@@ -45,8 +43,7 @@ public class FacetItemViewModel : ViewModelBase
     /// </summary>
     public void CycleState()
     {
-        State = State switch
-        {
+        State = State switch {
             FacetSelectionState.Ignore => FacetSelectionState.Include,
             FacetSelectionState.Include => FacetSelectionState.Exclude,
             FacetSelectionState.Exclude => FacetSelectionState.Ignore,

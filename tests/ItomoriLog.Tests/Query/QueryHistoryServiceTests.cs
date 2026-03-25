@@ -1,7 +1,7 @@
 using FluentAssertions;
+
 using ItomoriLog.Core.Query;
 using ItomoriLog.Core.Storage;
-using DuckDB.NET.Data;
 
 namespace ItomoriLog.Tests.Query;
 

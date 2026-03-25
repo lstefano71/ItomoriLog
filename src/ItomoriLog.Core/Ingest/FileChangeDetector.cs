@@ -1,5 +1,6 @@
-using System.Security.Cryptography;
 using DuckDB.NET.Data;
+
+using System.Security.Cryptography;
 
 namespace ItomoriLog.Core.Ingest;
 
@@ -31,8 +32,7 @@ public sealed class FileChangeDetector
             return new FileChangeResult(segmentId, FileChangeStatus.New, "No source path stored for segment");
 
         var canonicalSourcePath = SourcePathHelper.Normalize(meta.SourcePath);
-        if (SourcePathHelper.TrySplitArchiveEntry(canonicalSourcePath, out var archivePath, out var entryFullName))
-        {
+        if (SourcePathHelper.TrySplitArchiveEntry(canonicalSourcePath, out var archivePath, out var entryFullName)) {
             if (!File.Exists(archivePath))
                 return new FileChangeResult(segmentId, FileChangeStatus.Deleted, $"Archive not found: {archivePath}");
 
@@ -44,10 +44,8 @@ public sealed class FileChangeDetector
                     $"Size changed: {meta.FileSizeBytes.Value} → {zipEntry.SizeBytes}");
 
             var archiveInfo = new FileInfo(archivePath);
-            if (meta.LastModifiedUtc.HasValue && archiveInfo.LastWriteTimeUtc != meta.LastModifiedUtc.Value)
-            {
-                if (meta.FileHash is not null && zipEntry.SizeBytes <= HashThresholdBytes)
-                {
+            if (meta.LastModifiedUtc.HasValue && archiveInfo.LastWriteTimeUtc != meta.LastModifiedUtc.Value) {
+                if (meta.FileHash is not null && zipEntry.SizeBytes <= HashThresholdBytes) {
                     await using var currentStream = ZipHandler.OpenRead(archivePath, zipEntry.EntryName);
                     var currentHash = await ComputeStreamHashAsync(currentStream, ct);
                     if (currentHash != meta.FileHash)
@@ -75,11 +73,9 @@ public sealed class FileChangeDetector
             return new FileChangeResult(segmentId, FileChangeStatus.Modified,
                 $"Size changed: {meta.FileSizeBytes.Value} → {fileInfo.Length}");
 
-        if (meta.LastModifiedUtc.HasValue && fileInfo.LastWriteTimeUtc != meta.LastModifiedUtc.Value)
-        {
+        if (meta.LastModifiedUtc.HasValue && fileInfo.LastWriteTimeUtc != meta.LastModifiedUtc.Value) {
             // Last-modified differs — confirm with hash if available and file is small enough
-            if (meta.FileHash is not null && fileInfo.Length <= HashThresholdBytes)
-            {
+            if (meta.FileHash is not null && fileInfo.Length <= HashThresholdBytes) {
                 var currentHash = await ComputeFileHashAsync(meta.SourcePath, ct);
                 if (currentHash != meta.FileHash)
                     return new FileChangeResult(segmentId, FileChangeStatus.Modified,
@@ -107,21 +103,17 @@ public sealed class FileChangeDetector
         DateTime lastModifiedUtc;
         string? hash = null;
 
-        if (SourcePathHelper.TrySplitArchiveEntry(canonicalSourcePath, out var archivePath, out var entryFullName))
-        {
+        if (SourcePathHelper.TrySplitArchiveEntry(canonicalSourcePath, out var archivePath, out var entryFullName)) {
             if (!File.Exists(archivePath) || !ZipHandler.TryGetEntry(archivePath, entryFullName, out var zipEntry))
                 return;
 
             fileSizeBytes = zipEntry.SizeBytes;
             lastModifiedUtc = File.GetLastWriteTimeUtc(archivePath);
-            if (fileSizeBytes <= HashThresholdBytes)
-            {
+            if (fileSizeBytes <= HashThresholdBytes) {
                 await using var entryStream = ZipHandler.OpenRead(archivePath, zipEntry.EntryName);
                 hash = await ComputeStreamHashAsync(entryStream, ct);
             }
-        }
-        else
-        {
+        } else {
             var fileInfo = new FileInfo(canonicalSourcePath);
             if (!fileInfo.Exists)
                 return;

@@ -2,7 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
-using ReactiveUI;
+
 using ItomoriLog.UI.ViewModels;
 
 namespace ItomoriLog.UI.Views;
@@ -64,8 +64,7 @@ public partial class SessionShellView : UserControl
         var topLevel = TopLevel.GetTopLevel(this);
         if (topLevel is null) return;
 
-        var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
+        var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions {
             Title = "Select log files to ingest",
             AllowMultiple = true
         });
@@ -87,8 +86,7 @@ public partial class SessionShellView : UserControl
         var topLevel = TopLevel.GetTopLevel(this);
         if (topLevel is null) return;
 
-        var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-        {
+        var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions {
             Title = "Select folders to stage for ingestion",
             AllowMultiple = true
         });
@@ -136,8 +134,7 @@ public partial class SessionShellView : UserControl
     {
         if (e.Key != Key.Escape
             || DataContext is not SessionShellViewModel { LogsPage: { } logsPage }
-            || string.IsNullOrWhiteSpace(logsPage.QueryText))
-        {
+            || string.IsNullOrWhiteSpace(logsPage.QueryText)) {
             return;
         }
 

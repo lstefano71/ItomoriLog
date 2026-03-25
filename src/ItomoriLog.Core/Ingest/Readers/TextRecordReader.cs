@@ -33,12 +33,10 @@ public sealed class TextRecordReader : IRecordReader
         long recordEndOffset = 0;
 
         // Seek to next start-of-record
-        if (_pushback is not null)
-        {
+        if (_pushback is not null) {
             bufferedLine = _pushback;
             _pushback = null;
-            if (_startRegex.IsMatch(bufferedLine.Value.Text))
-            {
+            if (_startRegex.IsMatch(bufferedLine.Value.Text)) {
                 lines.Add(bufferedLine.Value.Text);
                 recordStartLine = bufferedLine.Value.LineNumber;
                 recordStartOffset = bufferedLine.Value.StartByteOffset;
@@ -46,12 +44,9 @@ public sealed class TextRecordReader : IRecordReader
             }
         }
 
-        if (lines.Count == 0)
-        {
-            while ((bufferedLine = ReadLine()) is not null)
-            {
-                if (_startRegex.IsMatch(bufferedLine.Value.Text))
-                {
+        if (lines.Count == 0) {
+            while ((bufferedLine = ReadLine()) is not null) {
+                if (_startRegex.IsMatch(bufferedLine.Value.Text)) {
                     lines.Add(bufferedLine.Value.Text);
                     recordStartLine = bufferedLine.Value.LineNumber;
                     recordStartOffset = bufferedLine.Value.StartByteOffset;
@@ -61,18 +56,15 @@ public sealed class TextRecordReader : IRecordReader
             }
         }
 
-        if (lines.Count == 0)
-        {
+        if (lines.Count == 0) {
             record = default!;
             return false;
         }
 
         // Accumulate continuation lines
         int continuationCount = 0;
-        while ((bufferedLine = ReadLine()) is not null)
-        {
-            if (_startRegex.IsMatch(bufferedLine.Value.Text))
-            {
+        while ((bufferedLine = ReadLine()) is not null) {
+            if (_startRegex.IsMatch(bufferedLine.Value.Text)) {
                 _pushback = bufferedLine;
                 break;
             }
@@ -97,8 +89,7 @@ public sealed class TextRecordReader : IRecordReader
     {
         var previousOffset = _byteOffset;
         var line = _reader.ReadLine();
-        if (line is not null)
-        {
+        if (line is not null) {
             _lineNumber++;
             var lineBytes = _byteCounter(line);
             if (lineBytes < 0)

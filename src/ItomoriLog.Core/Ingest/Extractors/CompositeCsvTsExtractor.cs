@@ -1,5 +1,6 @@
-using System.Globalization;
 using ItomoriLog.Core.Model;
+
+using System.Globalization;
 
 namespace ItomoriLog.Core.Ingest.Extractors;
 
@@ -33,16 +34,13 @@ public sealed class CompositeCsvTsExtractor : ITimestampExtractor, ITimestampExt
 
     public bool TryExtract(RawRecord raw, out DateTimeOffset timestamp)
     {
-        if (TryExtractWithMetadata(raw, out var extraction))
-        {
-            if (extraction.ExplicitTimestamp.HasValue)
-            {
+        if (TryExtractWithMetadata(raw, out var extraction)) {
+            if (extraction.ExplicitTimestamp.HasValue) {
                 timestamp = extraction.ExplicitTimestamp.Value;
                 return true;
             }
 
-            if (extraction.BareTimestamp.HasValue)
-            {
+            if (extraction.BareTimestamp.HasValue) {
                 timestamp = TimezonePolicy.ApplyTimeBasisToBare(extraction.BareTimestamp.Value, _basis);
                 return true;
             }
@@ -54,24 +52,20 @@ public sealed class CompositeCsvTsExtractor : ITimestampExtractor, ITimestampExt
 
     public bool TryExtractWithMetadata(RawRecord raw, out TimestampExtraction extraction)
     {
-        if (raw.Fields is null)
-        {
+        if (raw.Fields is null) {
             extraction = default!;
             return false;
         }
 
         // Composite: concatenate values from all timestamp fields
-        if (_timestampFields.Length > 1)
-        {
+        if (_timestampFields.Length > 1) {
             var parts = new List<string>(_timestampFields.Length);
-            foreach (var field in _timestampFields)
-            {
+            foreach (var field in _timestampFields) {
                 if (raw.Fields.TryGetValue(field, out var val) && !string.IsNullOrWhiteSpace(val))
                     parts.Add(val.Trim());
             }
 
-            if (parts.Count > 0)
-            {
+            if (parts.Count > 0) {
                 var combined = string.Join(' ', parts);
                 if (TryParseTimestamp(combined, out extraction))
                     return true;
@@ -79,10 +73,8 @@ public sealed class CompositeCsvTsExtractor : ITimestampExtractor, ITimestampExt
         }
 
         // Single field or fallback: try each field individually
-        foreach (var field in _timestampFields)
-        {
-            if (raw.Fields.TryGetValue(field, out var val) && !string.IsNullOrWhiteSpace(val))
-            {
+        foreach (var field in _timestampFields) {
+            if (raw.Fields.TryGetValue(field, out var val) && !string.IsNullOrWhiteSpace(val)) {
                 if (TryParseTimestamp(val.Trim(), out extraction))
                     return true;
             }
@@ -96,29 +88,25 @@ public sealed class CompositeCsvTsExtractor : ITimestampExtractor, ITimestampExt
     {
         // Try DateTimeOffset.TryParse (handles offsets and Z)
         if (DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture,
-            DateTimeStyles.AllowWhiteSpaces, out var explicitTs))
-        {
+            DateTimeStyles.AllowWhiteSpaces, out var explicitTs)) {
             extraction = TimestampExtraction.FromExplicit(explicitTs, value);
             return true;
         }
 
         // Try exact format parsing
         if (DateTime.TryParseExact(value, Formats, CultureInfo.InvariantCulture,
-            DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.NoCurrentDateDefault, out var dt))
-        {
+            DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.NoCurrentDateDefault, out var dt)) {
             extraction = TimestampExtraction.FromBare(dt, value);
             return true;
         }
 
-        if (TimestampParsing.TryParseWithTwoDigitYearWindow(value, out var yyDt, out var usedWindow))
-        {
+        if (TimestampParsing.TryParseWithTwoDigitYearWindow(value, out var yyDt, out var usedWindow)) {
             extraction = TimestampExtraction.FromBare(yyDt, value, usedTwoDigitYear: usedWindow);
             return true;
         }
 
         // Epoch fallback
-        if (long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var epoch))
-        {
+        if (long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var epoch)) {
             var epochTs = value.Length >= 13
                 ? DateTimeOffset.FromUnixTimeMilliseconds(epoch)
                 : DateTimeOffset.FromUnixTimeSeconds(epoch);

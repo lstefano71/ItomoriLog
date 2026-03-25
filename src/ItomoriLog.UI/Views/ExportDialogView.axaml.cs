@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+
 using ItomoriLog.UI.ViewModels;
 
 namespace ItomoriLog.UI.Views;
@@ -28,16 +29,14 @@ public partial class ExportDialogView : UserControl
         if (topLevel is null)
             return;
 
-        var ext = vm.SelectedFormat switch
-        {
+        var ext = vm.SelectedFormat switch {
             Core.Export.ExportFormat.Csv => "csv",
             Core.Export.ExportFormat.JsonLines => "jsonl",
             Core.Export.ExportFormat.Parquet => "parquet",
             _ => "csv"
         };
 
-        var files = await topLevel.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
-        {
+        var files = await topLevel.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions {
             Title = "Export logs",
             DefaultExtension = ext
         });

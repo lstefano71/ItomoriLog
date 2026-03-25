@@ -1,7 +1,9 @@
-using System.Collections.Concurrent;
 using DuckDB.NET.Data;
+
 using ItomoriLog.Core.Model;
 using ItomoriLog.Core.Storage;
+
+using System.Collections.Concurrent;
 
 namespace ItomoriLog.Core.Query;
 
@@ -48,8 +50,7 @@ public sealed class RowPager
         var conn = await _factory.GetConnectionAsync(ct);
 
         // Execute setup SQL (e.g., temp table for TICK) if present
-        if (query.SetupSql is not null)
-        {
+        if (query.SetupSql is not null) {
             using var setupCmd = conn.CreateCommand();
             setupCmd.CommandText = query.SetupSql;
             await setupCmd.ExecuteNonQueryAsync(ct);
@@ -63,8 +64,7 @@ public sealed class RowPager
         var rows = new List<LogRow>();
         using var reader = await cmd.ExecuteReaderAsync(ct);
 
-        while (await reader.ReadAsync(ct))
-        {
+        while (await reader.ReadAsync(ct)) {
             rows.Add(new LogRow(
                 TimestampUtc: new DateTimeOffset(reader.GetDateTime(0), TimeSpan.Zero),
                 TimestampBasis: Enum.Parse<TimeBasis>(reader.GetString(1)),
@@ -97,14 +97,10 @@ public sealed class RowPager
         PageCursor cursor,
         TickContext? tickContext = null)
     {
-        _ = Task.Run(async () =>
-        {
-            try
-            {
+        _ = Task.Run(async () => {
+            try {
                 await FetchPageAsync(filter, cursor, PageDirection.Forward, tickContext);
-            }
-            catch
-            {
+            } catch {
                 // Prefetch is best-effort
             }
         });
@@ -153,10 +149,8 @@ internal sealed class LruPageCache
 
     public bool TryGet(string key, out PageResult result)
     {
-        if (_map.TryGetValue(key, out var node))
-        {
-            lock (_lock)
-            {
+        if (_map.TryGetValue(key, out var node)) {
+            lock (_lock) {
                 _list.Remove(node);
                 _list.AddFirst(node);
             }
@@ -169,10 +163,8 @@ internal sealed class LruPageCache
 
     public void Put(string key, PageResult value)
     {
-        lock (_lock)
-        {
-            if (_map.TryGetValue(key, out var existing))
-            {
+        lock (_lock) {
+            if (_map.TryGetValue(key, out var existing)) {
                 _list.Remove(existing);
                 _map.TryRemove(key, out _);
             }
@@ -180,8 +172,7 @@ internal sealed class LruPageCache
             var node = _list.AddFirst((key, value));
             _map[key] = node;
 
-            while (_list.Count > _capacity)
-            {
+            while (_list.Count > _capacity) {
                 var last = _list.Last!;
                 _list.RemoveLast();
                 _map.TryRemove(last.Value.Key, out _);
@@ -191,8 +182,7 @@ internal sealed class LruPageCache
 
     public void Clear()
     {
-        lock (_lock)
-        {
+        lock (_lock) {
             _list.Clear();
             _map.Clear();
         }

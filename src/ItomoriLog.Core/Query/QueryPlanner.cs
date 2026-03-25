@@ -43,8 +43,7 @@ public sealed class QueryPlanner
             whereClauses.Add(filterEmission.WhereSql);
 
         // Keyset cursor
-        if (cursor is not null)
-        {
+        if (cursor is not null) {
             parameters.Add(cursor.TimestampUtc.UtcDateTime);
             var tsIdx = parameters.Count;
             parameters.Add(cursor.SegmentId);
@@ -83,10 +82,8 @@ public sealed class QueryPlanner
 
         // Replace $N with $(N+offset), processing from highest N downward to avoid double-replacement
         var maxParam = 0;
-        for (int i = 0; i < sql.Length - 1; i++)
-        {
-            if (sql[i] == '$' && char.IsDigit(sql[i + 1]))
-            {
+        for (int i = 0; i < sql.Length - 1; i++) {
+            if (sql[i] == '$' && char.IsDigit(sql[i + 1])) {
                 int j = i + 1;
                 while (j < sql.Length && char.IsDigit(sql[j])) j++;
                 var num = int.Parse(sql[(i + 1)..j]);

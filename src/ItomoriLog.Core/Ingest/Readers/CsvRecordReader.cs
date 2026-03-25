@@ -36,17 +36,14 @@ public sealed class CsvRecordReader : IRecordReader
         _expectedColumnCount = _columnNames.Length;
 
         // Skip header row if present
-        if (boundary.HasHeader)
-        {
+        if (boundary.HasHeader) {
             var headerLine = _reader.ReadLine();
-            if (headerLine is not null)
-            {
+            if (headerLine is not null) {
                 _lineNumber++;
                 _byteOffset += _byteCounter(headerLine) + 1;
 
                 // If no column names were provided, parse them from the header
-                if (_expectedColumnCount == 0)
-                {
+                if (_expectedColumnCount == 0) {
                     _columnNames = ParseCsvLine(headerLine, boundary.Delimiter, boundary.Quote);
                     _expectedColumnCount = _columnNames.Length;
                 }
@@ -56,11 +53,9 @@ public sealed class CsvRecordReader : IRecordReader
 
     public bool TryReadNext(out RawRecord record)
     {
-        while (true)
-        {
+        while (true) {
             var line = _reader.ReadLine();
-            if (line is null)
-            {
+            if (line is null) {
                 CloseActiveSkip();
                 record = default!;
                 return false;
@@ -74,14 +69,12 @@ public sealed class CsvRecordReader : IRecordReader
 
             var fields = ParseCsvLine(line, _boundary.Delimiter, _boundary.Quote);
 
-            if (_expectedColumnCount > 0 && fields.Length != _expectedColumnCount)
-            {
+            if (_expectedColumnCount > 0 && fields.Length != _expectedColumnCount) {
                 // Bad row
                 _consecutiveBadRows++;
                 _consecutiveGoodRows = 0;
 
-                if (_consecutiveBadRows >= MaxConsecutiveFailures)
-                {
+                if (_consecutiveBadRows >= MaxConsecutiveFailures) {
                     CloseActiveSkip();
                     _skipLogger?.BeginSkip(
                         Model.SkipReasonCode.Abandoned,
@@ -91,8 +84,7 @@ public sealed class CsvRecordReader : IRecordReader
                     return false;
                 }
 
-                if (_activeSkip is null && _skipLogger is not null)
-                {
+                if (_activeSkip is null && _skipLogger is not null) {
                     _activeSkip = _skipLogger.BeginSkip(
                         Model.SkipReasonCode.CsvColumnMismatch,
                         $"Expected {_expectedColumnCount} columns, got {fields.Length}",
@@ -108,14 +100,12 @@ public sealed class CsvRecordReader : IRecordReader
             _consecutiveBadRows = 0;
             _consecutiveGoodRows++;
 
-            if (_activeSkip is not null && _consecutiveGoodRows >= _resyncThreshold)
-            {
+            if (_activeSkip is not null && _consecutiveGoodRows >= _resyncThreshold) {
                 CloseActiveSkip();
             }
 
             var fieldDict = new Dictionary<string, string>(_columnNames.Length);
-            for (int i = 0; i < _columnNames.Length && i < fields.Length; i++)
-            {
+            for (int i = 0; i < _columnNames.Length && i < fields.Length; i++) {
                 fieldDict[_columnNames[i]] = fields[i];
             }
 
@@ -132,8 +122,7 @@ public sealed class CsvRecordReader : IRecordReader
 
     private void CloseActiveSkip()
     {
-        if (_activeSkip is not null)
-        {
+        if (_activeSkip is not null) {
             var skip = _activeSkip.Value;
             skip.Close(endLine: _lineNumber, endOffset: _byteOffset);
             _activeSkip = null;
@@ -147,17 +136,13 @@ public sealed class CsvRecordReader : IRecordReader
         bool inQuotes = false;
         int i = 0;
 
-        while (i < line.Length)
-        {
+        while (i < line.Length) {
             char c = line[i];
 
-            if (inQuotes)
-            {
-                if (c == quote)
-                {
+            if (inQuotes) {
+                if (c == quote) {
                     // Check for escaped quote (RFC 4180)
-                    if (i + 1 < line.Length && line[i + 1] == quote)
-                    {
+                    if (i + 1 < line.Length && line[i + 1] == quote) {
                         sb.Append(quote);
                         i += 2;
                         continue;
@@ -168,22 +153,15 @@ public sealed class CsvRecordReader : IRecordReader
                 }
                 sb.Append(c);
                 i++;
-            }
-            else
-            {
-                if (c == quote && sb.Length == 0)
-                {
+            } else {
+                if (c == quote && sb.Length == 0) {
                     inQuotes = true;
                     i++;
-                }
-                else if (c == delimiter)
-                {
+                } else if (c == delimiter) {
                     fields.Add(sb.ToString());
                     sb.Clear();
                     i++;
-                }
-                else
-                {
+                } else {
                     sb.Append(c);
                     i++;
                 }

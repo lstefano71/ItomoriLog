@@ -32,11 +32,9 @@ public sealed class NdjsonRecordReader : IRecordReader
 
     public bool TryReadNext(out RawRecord record)
     {
-        while (true)
-        {
+        while (true) {
             var line = _reader.ReadLine();
-            if (line is null)
-            {
+            if (line is null) {
                 CloseActiveSkip();
                 record = default!;
                 return false;
@@ -49,18 +47,14 @@ public sealed class NdjsonRecordReader : IRecordReader
                 continue;
 
             Dictionary<string, string>? fields;
-            try
-            {
+            try {
                 fields = ParseJsonLine(line);
-            }
-            catch
-            {
+            } catch {
                 // Malformed JSON
                 _consecutiveBadRows++;
                 _consecutiveGoodRows = 0;
 
-                if (_consecutiveBadRows >= MaxConsecutiveFailures)
-                {
+                if (_consecutiveBadRows >= MaxConsecutiveFailures) {
                     CloseActiveSkip();
                     _skipLogger?.BeginSkip(
                         Model.SkipReasonCode.Abandoned,
@@ -70,8 +64,7 @@ public sealed class NdjsonRecordReader : IRecordReader
                     return false;
                 }
 
-                if (_activeSkip is null && _skipLogger is not null)
-                {
+                if (_activeSkip is null && _skipLogger is not null) {
                     _activeSkip = _skipLogger.BeginSkip(
                         Model.SkipReasonCode.JsonMalformed,
                         "Failed to parse JSON line",
@@ -87,8 +80,7 @@ public sealed class NdjsonRecordReader : IRecordReader
             _consecutiveBadRows = 0;
             _consecutiveGoodRows++;
 
-            if (_activeSkip is not null && _consecutiveGoodRows >= ResyncThreshold)
-            {
+            if (_activeSkip is not null && _consecutiveGoodRows >= ResyncThreshold) {
                 CloseActiveSkip();
             }
 
@@ -111,10 +103,8 @@ public sealed class NdjsonRecordReader : IRecordReader
         if (doc.RootElement.ValueKind != JsonValueKind.Object)
             throw new JsonException("Expected JSON object");
 
-        foreach (var prop in doc.RootElement.EnumerateObject())
-        {
-            fields[prop.Name] = prop.Value.ValueKind switch
-            {
+        foreach (var prop in doc.RootElement.EnumerateObject()) {
+            fields[prop.Name] = prop.Value.ValueKind switch {
                 JsonValueKind.String => prop.Value.GetString() ?? "",
                 JsonValueKind.Number => prop.Value.GetRawText(),
                 JsonValueKind.True => "true",
@@ -129,8 +119,7 @@ public sealed class NdjsonRecordReader : IRecordReader
 
     private void CloseActiveSkip()
     {
-        if (_activeSkip is not null)
-        {
+        if (_activeSkip is not null) {
             var skip = _activeSkip.Value;
             skip.Close(endLine: _lineNumber, endOffset: _byteOffset);
             _activeSkip = null;

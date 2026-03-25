@@ -1,4 +1,5 @@
 using DuckDB.NET.Data;
+
 using ItomoriLog.Core.Storage;
 
 namespace ItomoriLog.Core.Query;
@@ -69,33 +70,27 @@ public sealed class FacetQuery
         var parameters = new List<object>();
         var clauses = new List<string>();
 
-        if (startUtc.HasValue)
-        {
+        if (startUtc.HasValue) {
             parameters.Add(startUtc.Value.UtcDateTime);
             clauses.Add($"timestamp_utc >= ${parameters.Count}");
         }
-        if (endUtc.HasValue)
-        {
+        if (endUtc.HasValue) {
             parameters.Add(endUtc.Value.UtcDateTime);
             clauses.Add($"timestamp_utc < ${parameters.Count}");
         }
 
-        if (levels is { Count: > 0 })
-        {
+        if (levels is { Count: > 0 }) {
             var placeholders = new List<string>();
-            foreach (var level in levels)
-            {
+            foreach (var level in levels) {
                 parameters.Add(level);
                 placeholders.Add($"${parameters.Count}");
             }
             clauses.Add($"level IN ({string.Join(", ", placeholders)})");
         }
 
-        if (sourceIds is { Count: > 0 })
-        {
+        if (sourceIds is { Count: > 0 }) {
             var placeholders = new List<string>();
-            foreach (var sourceId in sourceIds)
-            {
+            foreach (var sourceId in sourceIds) {
                 parameters.Add(sourceId);
                 placeholders.Add($"${parameters.Count}");
             }
@@ -123,8 +118,7 @@ public sealed class FacetQuery
         var items = new List<FacetItem>();
         using var reader = await cmd.ExecuteReaderAsync(ct);
 
-        while (await reader.ReadAsync(ct))
-        {
+        while (await reader.ReadAsync(ct)) {
             var value = reader.IsDBNull(0) ? "(none)" : reader.GetString(0);
             var count = reader.GetInt64(1);
             items.Add(new FacetItem(value, count));

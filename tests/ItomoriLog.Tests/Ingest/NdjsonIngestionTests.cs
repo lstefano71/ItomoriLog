@@ -1,4 +1,5 @@
 using FluentAssertions;
+
 using ItomoriLog.Core.Ingest;
 using ItomoriLog.Core.Ingest.Detectors;
 using ItomoriLog.Core.Ingest.Extractors;
@@ -98,8 +99,7 @@ public class NdjsonIngestionTests
     [Fact]
     public void JsonTsExtractor_IsoTimestamp_Parses()
     {
-        var fields = new Dictionary<string, string>
-        {
+        var fields = new Dictionary<string, string> {
             ["timestamp"] = "2024-03-15T10:30:45.123Z",
             ["message"] = "Hello"
         };
@@ -116,8 +116,7 @@ public class NdjsonIngestionTests
     public void JsonTsExtractor_EpochTimestamp_Parses()
     {
         // Epoch seconds: 1710500000 = 2024-03-15T12:53:20Z
-        var fields = new Dictionary<string, string>
-        {
+        var fields = new Dictionary<string, string> {
             ["ts"] = "1710500000",
             ["message"] = "Hello"
         };
@@ -149,10 +148,8 @@ public class NdjsonIngestionTests
         using var reader = new NdjsonRecordReader(new StringReader(content), boundary);
         var rows = new List<LogRow>();
         long idx = 0;
-        while (reader.TryReadNext(out var rec))
-        {
-            if (detection.Extractor.TryExtract(rec, out var ts))
-            {
+        while (reader.TryReadNext(out var rec)) {
+            if (detection.Extractor.TryExtract(rec, out var ts)) {
                 rows.Add(new LogRow(
                     TimestampUtc: ts.ToUniversalTime(),
                     TimestampBasis: TimeBasis.Utc,
@@ -175,8 +172,7 @@ public class NdjsonIngestionTests
         // Insert into DuckDB
         var tempDir = Path.Combine(Path.GetTempPath(), $"itomorilog_ndjson_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
-        try
-        {
+        try {
             var dbPath = Path.Combine(tempDir, "test.duckdb");
             using var factory = new DuckLakeConnectionFactory(dbPath);
             var conn = await factory.GetConnectionAsync();
@@ -189,9 +185,7 @@ public class NdjsonIngestionTests
             cmd.CommandText = "SELECT COUNT(*) FROM logs";
             var count = await cmd.ExecuteScalarAsync();
             Convert.ToInt64(count).Should().Be(15);
-        }
-        finally
-        {
+        } finally {
             try { Directory.Delete(tempDir, recursive: true); } catch { }
         }
     }

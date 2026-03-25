@@ -1,5 +1,6 @@
-using System.Globalization;
 using ItomoriLog.Core.Model;
+
+using System.Globalization;
 
 namespace ItomoriLog.Core.Ingest.Extractors;
 
@@ -29,16 +30,13 @@ public sealed class JsonTimestampExtractor : ITimestampExtractor, ITimestampExtr
 
     public bool TryExtract(RawRecord raw, out DateTimeOffset timestamp)
     {
-        if (TryExtractWithMetadata(raw, out var extraction))
-        {
-            if (extraction.ExplicitTimestamp.HasValue)
-            {
+        if (TryExtractWithMetadata(raw, out var extraction)) {
+            if (extraction.ExplicitTimestamp.HasValue) {
                 timestamp = extraction.ExplicitTimestamp.Value;
                 return true;
             }
 
-            if (extraction.BareTimestamp.HasValue)
-            {
+            if (extraction.BareTimestamp.HasValue) {
                 timestamp = TimezonePolicy.ApplyTimeBasisToBare(extraction.BareTimestamp.Value, _basis);
                 return true;
             }
@@ -51,8 +49,7 @@ public sealed class JsonTimestampExtractor : ITimestampExtractor, ITimestampExtr
     public bool TryExtractWithMetadata(RawRecord raw, out TimestampExtraction extraction)
     {
         if (raw.Fields is null || !raw.Fields.TryGetValue(_fieldPath, out var value)
-            || string.IsNullOrWhiteSpace(value))
-        {
+            || string.IsNullOrWhiteSpace(value)) {
             extraction = default!;
             return false;
         }
@@ -61,29 +58,25 @@ public sealed class JsonTimestampExtractor : ITimestampExtractor, ITimestampExtr
 
         // Try DateTimeOffset.TryParse (handles ISO-8601 with offsets and Z)
         if (DateTimeOffset.TryParse(trimmed, CultureInfo.InvariantCulture,
-            DateTimeStyles.AllowWhiteSpaces, out var explicitTs))
-        {
+            DateTimeStyles.AllowWhiteSpaces, out var explicitTs)) {
             extraction = TimestampExtraction.FromExplicit(explicitTs, trimmed);
             return true;
         }
 
         // Try exact format parsing
         if (DateTime.TryParseExact(trimmed, Formats, CultureInfo.InvariantCulture,
-            DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.NoCurrentDateDefault, out var dt))
-        {
+            DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.NoCurrentDateDefault, out var dt)) {
             extraction = TimestampExtraction.FromBare(dt, trimmed);
             return true;
         }
 
-        if (TimestampParsing.TryParseWithTwoDigitYearWindow(trimmed, out var yyDt, out var usedWindow))
-        {
+        if (TimestampParsing.TryParseWithTwoDigitYearWindow(trimmed, out var yyDt, out var usedWindow)) {
             extraction = TimestampExtraction.FromBare(yyDt, trimmed, usedTwoDigitYear: usedWindow);
             return true;
         }
 
         // Epoch fallback (seconds or milliseconds)
-        if (long.TryParse(trimmed, NumberStyles.None, CultureInfo.InvariantCulture, out var epoch))
-        {
+        if (long.TryParse(trimmed, NumberStyles.None, CultureInfo.InvariantCulture, out var epoch)) {
             var epochTs = trimmed.Length >= 13
                 ? DateTimeOffset.FromUnixTimeMilliseconds(epoch)
                 : DateTimeOffset.FromUnixTimeSeconds(epoch);
@@ -92,8 +85,7 @@ public sealed class JsonTimestampExtractor : ITimestampExtractor, ITimestampExtr
         }
 
         // Epoch as double (fractional seconds)
-        if (double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out var epochDouble))
-        {
+        if (double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out var epochDouble)) {
             var epochTs = DateTimeOffset.FromUnixTimeMilliseconds((long)(epochDouble * 1000));
             extraction = TimestampExtraction.FromExplicit(epochTs, trimmed);
             return true;

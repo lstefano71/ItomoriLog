@@ -1,4 +1,5 @@
 using FluentAssertions;
+
 using ItomoriLog.Core.Storage;
 using ItomoriLog.UI.ViewModels;
 

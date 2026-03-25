@@ -1,5 +1,7 @@
 using DuckDB.NET.Data;
+
 using ItomoriLog.Core.Model;
+
 using System.Text;
 
 namespace ItomoriLog.Core.Ingest;
@@ -19,8 +21,7 @@ public sealed class SkipBatchInserter
         if (rows.Count == 0)
             return;
 
-        for (int i = 0; i < rows.Count; i += RowsPerStatement)
-        {
+        for (int i = 0; i < rows.Count; i += RowsPerStatement) {
             var count = Math.Min(RowsPerStatement, rows.Count - i);
             await InsertChunkAsync(rows, i, count, sessionId, ct);
         }
@@ -38,15 +39,14 @@ public sealed class SkipBatchInserter
 
         using var cmd = _connection.CreateCommand();
 
-        for (int i = 0; i < count; i++)
-        {
+        for (int i = 0; i < count; i++) {
             ct.ThrowIfCancellationRequested();
 
             if (i > 0)
                 sql.Append(',');
 
             var p = (i * 14) + 1;
-            sql.Append($"(${p}, ${p+1}, ${p+2}, ${p+3}, ${p+4}, ${p+5}, ${p+6}, ${p+7}, ${p+8}, ${p+9}, ${p+10}, ${p+11}, ${p+12}, ${p+13})");
+            sql.Append($"(${p}, ${p + 1}, ${p + 2}, ${p + 3}, ${p + 4}, ${p + 5}, ${p + 6}, ${p + 7}, ${p + 8}, ${p + 9}, ${p + 10}, ${p + 11}, ${p + 12}, ${p + 13})");
 
             var row = rows[offset + i];
             cmd.Parameters.Add(new DuckDBParameter { Value = (object?)sessionId ?? DBNull.Value });

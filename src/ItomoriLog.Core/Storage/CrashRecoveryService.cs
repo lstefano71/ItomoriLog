@@ -1,6 +1,7 @@
+using DuckDB.NET.Data;
+
 using System.Diagnostics;
 using System.Text.Json;
-using DuckDB.NET.Data;
 
 namespace ItomoriLog.Core.Storage;
 
@@ -45,16 +46,13 @@ public sealed class CrashRecoveryService
         if (!File.Exists(LockFilePath))
             return false;
 
-        try
-        {
+        try {
             var json = File.ReadAllText(LockFilePath);
             var info = JsonSerializer.Deserialize<LockInfo>(json);
             if (info is null) return true;
 
             return !IsProcessRunning(info.Pid);
-        }
-        catch
-        {
+        } catch {
             // Corrupt lockfile → treat as stale
             return true;
         }
@@ -65,13 +63,10 @@ public sealed class CrashRecoveryService
         if (!File.Exists(LockFilePath))
             return null;
 
-        try
-        {
+        try {
             var json = File.ReadAllText(LockFilePath);
             return JsonSerializer.Deserialize<LockInfo>(json);
-        }
-        catch
-        {
+        } catch {
             return null;
         }
     }
@@ -88,8 +83,7 @@ public sealed class CrashRecoveryService
 
         var resumableSourcePaths = await ReadResumableSourcePathsAsync(connection, ct);
         var segmentCount = 0;
-        if (incompleteRuns.Count > 0)
-        {
+        if (incompleteRuns.Count > 0) {
             using var segCmd = connection.CreateCommand();
             // Count segments that belong to incomplete runs
             segCmd.CommandText = "SELECT COUNT(*) FROM segments s INNER JOIN ingest_runs r ON s.last_ingest_run_id = r.run_id WHERE r.status = 'running'";
@@ -132,13 +126,10 @@ public sealed class CrashRecoveryService
 
     internal static bool IsProcessRunning(int pid)
     {
-        try
-        {
+        try {
             var process = Process.GetProcessById(pid);
             return !process.HasExited;
-        }
-        catch (ArgumentException)
-        {
+        } catch (ArgumentException) {
             // Process does not exist
             return false;
         }

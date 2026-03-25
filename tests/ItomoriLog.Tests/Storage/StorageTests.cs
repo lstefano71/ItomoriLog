@@ -1,5 +1,7 @@
 using DuckDB.NET.Data;
+
 using FluentAssertions;
+
 using ItomoriLog.Core.Ingest;
 using ItomoriLog.Core.Query;
 using ItomoriLog.Core.Storage;
@@ -138,8 +140,7 @@ public class StorageTests : IDisposable
         var connection = await _factory.GetConnectionAsync();
         await SchemaInitializer.EnsureSchemaAsync(connection);
 
-        using (var cmd = connection.CreateCommand())
-        {
+        using (var cmd = connection.CreateCommand()) {
             cmd.CommandText = """
                 INSERT INTO logs (
                     timestamp_utc, timestamp_basis, timestamp_effective_offset_minutes,
@@ -188,8 +189,7 @@ public class StorageTests : IDisposable
         using var reader = await cmd.ExecuteReaderAsync();
 
         var options = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-        while (await reader.ReadAsync())
-        {
+        while (await reader.ReadAsync()) {
             var optionName = TryGetReaderValue(reader, "option_name") ?? TryGetReaderValue(reader, "name");
             if (string.IsNullOrWhiteSpace(optionName))
                 continue;
@@ -203,8 +203,7 @@ public class StorageTests : IDisposable
 
     private static string? TryGetReaderValue(System.Data.Common.DbDataReader reader, string columnName)
     {
-        for (var i = 0; i < reader.FieldCount; i++)
-        {
+        for (var i = 0; i < reader.FieldCount; i++) {
             if (!string.Equals(reader.GetName(i), columnName, StringComparison.OrdinalIgnoreCase))
                 continue;
 

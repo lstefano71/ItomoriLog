@@ -1,5 +1,7 @@
 using DuckDB.NET.Data;
+
 using ItomoriLog.Core.Model;
+
 using System.Text;
 
 namespace ItomoriLog.Core.Ingest;
@@ -18,8 +20,7 @@ public sealed class LogBatchInserter
     {
         if (rows.Count == 0) return;
 
-        for (int i = 0; i < rows.Count; i += RowsPerStatement)
-        {
+        for (int i = 0; i < rows.Count; i += RowsPerStatement) {
             var count = Math.Min(RowsPerStatement, rows.Count - i);
             await InsertChunkAsync(rows, i, count, ct);
         }
@@ -38,8 +39,7 @@ public sealed class LogBatchInserter
 
         using var cmd = _connection.CreateCommand();
 
-        for (int i = 0; i < count; i++)
-        {
+        for (int i = 0; i < count; i++) {
             ct.ThrowIfCancellationRequested();
 
             if (i > 0)

@@ -1,7 +1,9 @@
+using ItomoriLog.Core.Export;
+
+using ReactiveUI;
+
 using System.Reactive;
 using System.Reactive.Linq;
-using ReactiveUI;
-using ItomoriLog.Core.Export;
 
 namespace ItomoriLog.UI.ViewModels;
 
@@ -29,80 +31,67 @@ public class ExportDialogViewModel : ViewModelBase
         BrowseCommand = ReactiveCommand.Create(() => { });
     }
 
-    public bool IsOpen
-    {
+    public bool IsOpen {
         get => _isOpen;
         set => this.RaiseAndSetIfChanged(ref _isOpen, value);
     }
 
-    public ExportFormat SelectedFormat
-    {
+    public ExportFormat SelectedFormat {
         get => _selectedFormat;
         set => this.RaiseAndSetIfChanged(ref _selectedFormat, value);
     }
 
-    public bool IsCsv
-    {
+    public bool IsCsv {
         get => _selectedFormat == ExportFormat.Csv;
         set { if (value) SelectedFormat = ExportFormat.Csv; }
     }
 
-    public bool IsJsonLines
-    {
+    public bool IsJsonLines {
         get => _selectedFormat == ExportFormat.JsonLines;
         set { if (value) SelectedFormat = ExportFormat.JsonLines; }
     }
 
-    public bool IsParquet
-    {
+    public bool IsParquet {
         get => _selectedFormat == ExportFormat.Parquet;
         set { if (value) SelectedFormat = ExportFormat.Parquet; }
     }
 
-    public string OutputPath
-    {
+    public string OutputPath {
         get => _outputPath;
         set => this.RaiseAndSetIfChanged(ref _outputPath, value);
     }
 
-    public ExportScope SelectedScope
-    {
+    public ExportScope SelectedScope {
         get => _selectedScope;
         set => this.RaiseAndSetIfChanged(ref _selectedScope, value);
     }
 
-    public bool IsCurrentViewScope
-    {
+    public bool IsCurrentViewScope {
         get => SelectedScope == ExportScope.CurrentView;
         set { if (value) SelectedScope = ExportScope.CurrentView; }
     }
 
-    public bool IsFullSessionScope
-    {
+    public bool IsFullSessionScope {
         get => SelectedScope == ExportScope.FullSession;
         set { if (value) SelectedScope = ExportScope.FullSession; }
     }
 
-    public bool IsExporting
-    {
+    public bool IsExporting {
         get => _isExporting;
         set => this.RaiseAndSetIfChanged(ref _isExporting, value);
     }
 
-    public double ProgressPercent
-    {
+    public double ProgressPercent {
         get => _progressPercent;
         set => this.RaiseAndSetIfChanged(ref _progressPercent, value);
     }
 
-    public string ProgressText
-    {
+    public string ProgressText {
         get => _progressText;
         set => this.RaiseAndSetIfChanged(ref _progressText, value);
     }
 
-    public string ErrorText
-    {
+    public string ErrorText {
         get => _errorText;
         set => this.RaiseAndSetIfChanged(ref _errorText, value);
     }
@@ -121,10 +110,8 @@ public class ExportDialogViewModel : ViewModelBase
         ErrorText = "";
         ProgressText = "";
         ProgressPercent = 0;
-        if (string.IsNullOrWhiteSpace(OutputPath))
-        {
-            var ext = SelectedFormat switch
-            {
+        if (string.IsNullOrWhiteSpace(OutputPath)) {
+            var ext = SelectedFormat switch {
                 ExportFormat.Csv => "csv",
                 ExportFormat.JsonLines => "jsonl",
                 ExportFormat.Parquet => "parquet",
@@ -144,10 +131,8 @@ public class ExportDialogViewModel : ViewModelBase
         _boundSession = session;
         ExportCallback = session.ExecuteExportAsync;
 
-        if (string.IsNullOrWhiteSpace(OutputPath))
-        {
-            var ext = SelectedFormat switch
-            {
+        if (string.IsNullOrWhiteSpace(OutputPath)) {
+            var ext = SelectedFormat switch {
                 ExportFormat.Csv => "csv",
                 ExportFormat.JsonLines => "jsonl",
                 ExportFormat.Parquet => "parquet",
@@ -165,13 +150,11 @@ public class ExportDialogViewModel : ViewModelBase
         IsExporting = true;
         ErrorText = "";
 
-        try
-        {
+        try {
             var options = _boundSession is not null
                 ? _boundSession.BuildExportOptions(SelectedScope, SelectedFormat, OutputPath)
                 : new ExportOptions(SelectedFormat, OutputPath, Scope: SelectedScope);
-            var progress = new Progress<ExportProgress>(p =>
-            {
+            var progress = new Progress<ExportProgress>(p => {
                 ProgressText = p.Status;
                 if (p.TotalEstimate > 0)
                     ProgressPercent = (double)p.RowsWritten / p.TotalEstimate * 100;
@@ -180,13 +163,9 @@ public class ExportDialogViewModel : ViewModelBase
             var count = await ExportCallback(options, progress, CancellationToken.None);
             ProgressText = $"Export complete — {count:N0} rows exported";
             ProgressPercent = 100;
-        }
-        catch (Exception ex)
-        {
+        } catch (Exception ex) {
             ErrorText = $"Export failed: {ex.Message}";
-        }
-        finally
-        {
+        } finally {
             IsExporting = false;
         }
     }

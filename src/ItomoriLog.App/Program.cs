@@ -1,9 +1,10 @@
 using Avalonia;
 using Avalonia.ReactiveUI;
-using ItomoriLog.Core.Storage;
+
 using ItomoriLog.Core.Ingest;
-using ItomoriLog.Core.Query;
 using ItomoriLog.Core.Model;
+using ItomoriLog.Core.Query;
+using ItomoriLog.Core.Storage;
 
 namespace ItomoriLog.App;
 
@@ -31,20 +32,17 @@ internal static class Program
             return false;
 
         var command = args[0].Trim().ToLowerInvariant();
-        if (command is "ingest")
-        {
+        if (command is "ingest") {
             RunIngestCli(args.Skip(1).ToArray());
             return true;
         }
 
-        if (command is "browse")
-        {
+        if (command is "browse") {
             RunBrowseCli(args.Skip(1).ToArray());
             return true;
         }
 
-        if (command is "--help" or "-h" or "help")
-        {
+        if (command is "--help" or "-h" or "help") {
             PrintCliHelp();
             return true;
         }
@@ -87,8 +85,7 @@ internal static class Program
         var plan = planner.PlanAsync(options.InputPaths, ExistingFileAction.Skip).GetAwaiter().GetResult();
 
         var orchestrator = new IngestOrchestrator(conn);
-        var progress = new Progress<IngestProgressUpdate>(update =>
-        {
+        var progress = new Progress<IngestProgressUpdate>(update => {
             Console.WriteLine(
                 $"[{update.Phase}] {Path.GetFileName(update.SourcePath)} {update.RecordsProcessed:N0} rec {update.BytesProcessed:N0}/{update.BytesTotal:N0} bytes");
         });
@@ -130,8 +127,7 @@ internal static class Program
             q.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = p });
         using var reader = q.ExecuteReader();
         Console.WriteLine("Sample rows:");
-        while (reader.Read())
-        {
+        while (reader.Read()) {
             Console.WriteLine($"{reader.GetDateTime(0):O} [{reader.GetString(4)}] {reader.GetString(11)}");
         }
     }
@@ -142,8 +138,7 @@ internal static class Program
             return new TimeBasisConfig(TimeBasis.Local);
 
         if (string.Equals(timezoneId, "UTC", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(timezoneId, "Etc/UTC", StringComparison.OrdinalIgnoreCase))
-        {
+            string.Equals(timezoneId, "Etc/UTC", StringComparison.OrdinalIgnoreCase)) {
             return new TimeBasisConfig(TimeBasis.Utc);
         }
 
@@ -159,26 +154,21 @@ internal static class Program
         string? sessionDescription = null;
         string? defaultTimezone = null;
 
-        for (var i = 0; i < args.Length; i++)
-        {
+        for (var i = 0; i < args.Length; i++) {
             var arg = args[i];
-            if (string.Equals(arg, "--session-out", StringComparison.OrdinalIgnoreCase))
-            {
+            if (string.Equals(arg, "--session-out", StringComparison.OrdinalIgnoreCase)) {
                 sessionOut = RequireValue(args, ref i, "--session-out");
                 continue;
             }
-            if (string.Equals(arg, "--session-title", StringComparison.OrdinalIgnoreCase))
-            {
+            if (string.Equals(arg, "--session-title", StringComparison.OrdinalIgnoreCase)) {
                 sessionTitle = RequireValue(args, ref i, "--session-title");
                 continue;
             }
-            if (string.Equals(arg, "--session-description", StringComparison.OrdinalIgnoreCase))
-            {
+            if (string.Equals(arg, "--session-description", StringComparison.OrdinalIgnoreCase)) {
                 sessionDescription = RequireValue(args, ref i, "--session-description");
                 continue;
             }
-            if (string.Equals(arg, "--default-timezone", StringComparison.OrdinalIgnoreCase))
-            {
+            if (string.Equals(arg, "--default-timezone", StringComparison.OrdinalIgnoreCase)) {
                 defaultTimezone = RequireValue(args, ref i, "--default-timezone");
                 continue;
             }
@@ -193,8 +183,7 @@ internal static class Program
 
     private static string? ParseBrowseArgs(string[] args)
     {
-        for (var i = 0; i < args.Length; i++)
-        {
+        for (var i = 0; i < args.Length; i++) {
             var arg = args[i];
             if (string.Equals(arg, "--session", StringComparison.OrdinalIgnoreCase))
                 return RequireValue(args, ref i, "--session");

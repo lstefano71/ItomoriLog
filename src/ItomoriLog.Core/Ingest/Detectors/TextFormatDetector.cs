@@ -1,5 +1,6 @@
-using System.Text.RegularExpressions;
 using ItomoriLog.Core.Ingest.Extractors;
+
+using System.Text.RegularExpressions;
 
 namespace ItomoriLog.Core.Ingest.Detectors;
 
@@ -16,8 +17,7 @@ public sealed class TextFormatDetector : IFormatDetector
 
         var lines = new List<string>();
         string? line;
-        while ((line = reader.ReadLine()) is not null && lines.Count < MaxSniffLines)
-        {
+        while ((line = reader.ReadLine()) is not null && lines.Count < MaxSniffLines) {
             if (!string.IsNullOrWhiteSpace(line))
                 lines.Add(line);
         }
@@ -27,8 +27,7 @@ public sealed class TextFormatDetector : IFormatDetector
 
         DetectionResult? best = null;
 
-        foreach (var (name, pattern) in SoRPatterns.All)
-        {
+        foreach (var (name, pattern) in SoRPatterns.All) {
             var (parseRate, monotonic) = ScorePattern(pattern, lines);
 
             if (parseRate < MinConfidence)
@@ -36,8 +35,7 @@ public sealed class TextFormatDetector : IFormatDetector
 
             var confidence = parseRate * 0.7 + (monotonic ? 0.3 : 0.0);
 
-            if (best is null || confidence > best.Confidence)
-            {
+            if (best is null || confidence > best.Confidence) {
                 var extractor = new RegexGroupTsExtractor(pattern);
                 best = new DetectionResult(
                     Confidence: confidence,
@@ -56,8 +54,7 @@ public sealed class TextFormatDetector : IFormatDetector
         var timestamps = new List<DateTimeOffset>();
         var extractor = new RegexGroupTsExtractor(pattern);
 
-        foreach (var line in lines)
-        {
+        foreach (var line in lines) {
             if (!pattern.IsMatch(line))
                 continue;
 
@@ -74,10 +71,8 @@ public sealed class TextFormatDetector : IFormatDetector
 
         // Check monotonicity (allow small out-of-order)
         bool monotonic = true;
-        for (int i = 1; i < timestamps.Count; i++)
-        {
-            if (timestamps[i] < timestamps[i - 1].AddSeconds(-2))
-            {
+        for (int i = 1; i < timestamps.Count; i++) {
+            if (timestamps[i] < timestamps[i - 1].AddSeconds(-2)) {
                 monotonic = false;
                 break;
             }

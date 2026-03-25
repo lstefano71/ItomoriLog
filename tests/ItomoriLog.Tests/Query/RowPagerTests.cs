@@ -1,9 +1,9 @@
 using FluentAssertions;
+
+using ItomoriLog.Core.Ingest;
 using ItomoriLog.Core.Model;
 using ItomoriLog.Core.Query;
 using ItomoriLog.Core.Storage;
-using ItomoriLog.Core.Ingest;
-using DuckDB.NET.Data;
 
 namespace ItomoriLog.Tests.Query;
 
@@ -30,8 +30,7 @@ public class RowPagerTests : IDisposable
         var rows = new List<LogRow>();
         var baseTs = new DateTimeOffset(2025, 6, 15, 12, 0, 0, TimeSpan.Zero);
 
-        for (int i = 0; i < count; i++)
-        {
+        for (int i = 0; i < count; i++) {
             rows.Add(new LogRow(
                 TimestampUtc: baseTs.AddSeconds(i),
                 TimestampBasis: TimeBasis.Utc,
@@ -165,8 +164,7 @@ public class RowPagerTests : IDisposable
 
         // Should still be in ascending order (reversed from DESC query)
         backResult.Rows.Should().NotBeEmpty();
-        for (int i = 1; i < backResult.Rows.Count; i++)
-        {
+        for (int i = 1; i < backResult.Rows.Count; i++) {
             backResult.Rows[i].RecordIndex.Should().BeGreaterThan(
                 backResult.Rows[i - 1].RecordIndex);
         }

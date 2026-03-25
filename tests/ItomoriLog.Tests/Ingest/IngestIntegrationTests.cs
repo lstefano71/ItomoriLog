@@ -1,4 +1,5 @@
 using FluentAssertions;
+
 using ItomoriLog.Core.Ingest;
 using ItomoriLog.Core.Ingest.Detectors;
 using ItomoriLog.Core.Ingest.Readers;
@@ -47,10 +48,8 @@ public class IngestIntegrationTests : IDisposable
 
         var rows = new List<LogRow>();
         long idx = 0;
-        while (reader.TryReadNext(out var rec))
-        {
-            if (detection.Extractor.TryExtract(rec, out var ts))
-            {
+        while (reader.TryReadNext(out var rec)) {
+            if (detection.Extractor.TryExtract(rec, out var ts)) {
                 rows.Add(new LogRow(
                     TimestampUtc: ts.ToUniversalTime(),
                     TimestampBasis: TimeBasis.Local,

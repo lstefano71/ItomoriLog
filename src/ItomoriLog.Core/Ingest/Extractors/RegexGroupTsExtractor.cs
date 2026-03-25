@@ -30,16 +30,13 @@ public sealed class RegexGroupTsExtractor : ITimestampExtractor, ITimestampExtra
 
     public bool TryExtract(RawRecord raw, out DateTimeOffset ts)
     {
-        if (TryExtractWithMetadata(raw, out var extraction))
-        {
-            if (extraction.ExplicitTimestamp.HasValue)
-            {
+        if (TryExtractWithMetadata(raw, out var extraction)) {
+            if (extraction.ExplicitTimestamp.HasValue) {
                 ts = extraction.ExplicitTimestamp.Value;
                 return true;
             }
 
-            if (extraction.BareTimestamp.HasValue)
-            {
+            if (extraction.BareTimestamp.HasValue) {
                 ts = new DateTimeOffset(DateTime.SpecifyKind(extraction.BareTimestamp.Value, DateTimeKind.Local));
                 return true;
             }
@@ -52,8 +49,7 @@ public sealed class RegexGroupTsExtractor : ITimestampExtractor, ITimestampExtra
     public bool TryExtractWithMetadata(RawRecord raw, out TimestampExtraction extraction)
     {
         var match = _regex.Match(raw.FirstLine);
-        if (!match.Success || !match.Groups[_groupName].Success)
-        {
+        if (!match.Success || !match.Groups[_groupName].Success) {
             extraction = default!;
             return false;
         }
@@ -63,8 +59,7 @@ public sealed class RegexGroupTsExtractor : ITimestampExtractor, ITimestampExtra
 
         // Try DateTimeOffset.TryParse first (handles offsets and Z)
         if (DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture,
-            DateTimeStyles.AllowWhiteSpaces, out var explicitTs))
-        {
+            DateTimeStyles.AllowWhiteSpaces, out var explicitTs)) {
             if (TryFindAlternateTimestamp(raw.FirstLine, value, out var alt))
                 alternate = alt;
 
@@ -74,8 +69,7 @@ public sealed class RegexGroupTsExtractor : ITimestampExtractor, ITimestampExtra
 
         // Try exact format parsing
         if (DateTime.TryParseExact(value, _formats, CultureInfo.InvariantCulture,
-            DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.NoCurrentDateDefault, out var dt))
-        {
+            DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.NoCurrentDateDefault, out var dt)) {
             if (TryFindAlternateTimestamp(raw.FirstLine, value, out var alt))
                 alternate = alt;
 
@@ -83,8 +77,7 @@ public sealed class RegexGroupTsExtractor : ITimestampExtractor, ITimestampExtra
             return true;
         }
 
-        if (TimestampParsing.TryParseWithTwoDigitYearWindow(value, out var yyDt, out var usedWindow))
-        {
+        if (TimestampParsing.TryParseWithTwoDigitYearWindow(value, out var yyDt, out var usedWindow)) {
             if (TryFindAlternateTimestamp(raw.FirstLine, value, out var alt))
                 alternate = alt;
 
@@ -93,8 +86,7 @@ public sealed class RegexGroupTsExtractor : ITimestampExtractor, ITimestampExtra
         }
 
         // Epoch fallback
-        if (long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var epoch))
-        {
+        if (long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var epoch)) {
             var epochTs = value.Length >= 13
                 ? DateTimeOffset.FromUnixTimeMilliseconds(epoch)
                 : DateTimeOffset.FromUnixTimeSeconds(epoch);
@@ -118,8 +110,7 @@ public sealed class RegexGroupTsExtractor : ITimestampExtractor, ITimestampExtra
 
         var normalizedParsed = parsedValue.Trim();
         var candidates = Regex.Matches(line, @"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[\.,]\d{1,7})?(?:Z|[+-]\d{2}:?\d{2})?");
-        foreach (Match candidate in candidates)
-        {
+        foreach (Match candidate in candidates) {
             var text = candidate.Value.Trim();
             if (string.Equals(text, normalizedParsed, StringComparison.Ordinal))
                 continue;

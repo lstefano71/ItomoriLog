@@ -1,5 +1,6 @@
-using System.Reactive;
 using ReactiveUI;
+
+using System.Reactive;
 
 namespace ItomoriLog.UI.ViewModels;
 
@@ -23,8 +24,7 @@ public class AboutDialogViewModel : ViewModelBase
     public string Credits => "Built with Avalonia, DuckDB, and .NET 10";
     public string Copyright => $"© {DateTime.UtcNow.Year} ItomoriLog Contributors";
 
-    public bool IsOpen
-    {
+    public bool IsOpen {
         get => _isOpen;
         set => this.RaiseAndSetIfChanged(ref _isOpen, value);
     }

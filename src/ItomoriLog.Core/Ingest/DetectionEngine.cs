@@ -9,7 +9,8 @@ public sealed class DetectionEngine
         new Detectors.NdjsonFormatDetector(),
         new Detectors.CsvFormatDetector(),
         new Detectors.TextFormatDetector(),
-    ]) { }
+    ])
+    { }
 
     public DetectionEngine(IReadOnlyList<IFormatDetector> detectors) => _detectors = detectors;
 
@@ -41,23 +42,20 @@ public sealed class DetectionEngine
             return results;
 
         var slots = new (DetectionResult result, int priority)?[_detectors.Count];
-        Parallel.For(0, _detectors.Count, i =>
-        {
+        Parallel.For(0, _detectors.Count, i => {
             using var detectorStream = new MemoryStream(sampleBytes, writable: false);
             var result = _detectors[i].Probe(detectorStream, sourceName);
             if (result is not null)
                 slots[i] = (result, i);
         });
 
-        foreach (var slot in slots)
-        {
+        foreach (var slot in slots) {
             if (slot.HasValue)
                 results.Add(slot.Value);
         }
 
         // Sort by confidence desc, then priority asc (lower index = higher priority)
-        results.Sort((a, b) =>
-        {
+        results.Sort((a, b) => {
             var cmp = b.result.Confidence.CompareTo(a.result.Confidence);
             return cmp != 0 ? cmp : a.priority.CompareTo(b.priority);
         });
@@ -74,8 +72,7 @@ public sealed class DetectionEngine
             : MaxSampleBytes];
 
         var totalRead = 0;
-        while (totalRead < buffer.Length)
-        {
+        while (totalRead < buffer.Length) {
             var read = sniffBuffer.Read(buffer, totalRead, buffer.Length - totalRead);
             if (read == 0)
                 break;

@@ -1,12 +1,14 @@
-using System.Collections.ObjectModel;
-using System.Globalization;
-using System.Text;
-using System.Text.RegularExpressions;
-using ReactiveUI;
 using ItomoriLog.Core.Ingest;
 using ItomoriLog.Core.Ingest.Extractors;
 using ItomoriLog.Core.Model;
 using ItomoriLog.Core.Storage;
+
+using ReactiveUI;
+
+using System.Collections.ObjectModel;
+using System.Globalization;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace ItomoriLog.UI.ViewModels;
 
@@ -108,28 +110,23 @@ public class StagedSourceItemViewModel : ReactiveObject
             new DelimiterChoiceViewModel("Pipe (|)", '|')
         ];
 
-        if (isDirectory)
-        {
+        if (isDirectory) {
             _detectionStatus = "Folder staged";
             _isDetectionUserConfirmed = true;
         }
     }
 
-    public string SourcePath
-    {
+    public string SourcePath {
         get => _sourcePath;
-        set
-        {
+        set {
             this.RaiseAndSetIfChanged(ref _sourcePath, value);
             RaiseComputedStateProperties();
         }
     }
 
-    public bool IsDirectory
-    {
+    public bool IsDirectory {
         get => _isDirectory;
-        set
-        {
+        set {
             this.RaiseAndSetIfChanged(ref _isDirectory, value);
             RaiseComputedStateProperties();
         }
@@ -140,60 +137,49 @@ public class StagedSourceItemViewModel : ReactiveObject
             ? name
             : SourcePath;
 
-    public string Phase
-    {
+    public string Phase {
         get => _phase;
-        set
-        {
+        set {
             this.RaiseAndSetIfChanged(ref _phase, value);
             RaiseComputedStateProperties();
         }
     }
 
-    public string? Message
-    {
+    public string? Message {
         get => _message;
-        set
-        {
+        set {
             this.RaiseAndSetIfChanged(ref _message, value);
             RaiseComputedStateProperties();
         }
     }
 
-    public long BytesProcessed
-    {
+    public long BytesProcessed {
         get => _bytesProcessed;
         set => this.RaiseAndSetIfChanged(ref _bytesProcessed, value);
     }
 
-    public long BytesTotal
-    {
+    public long BytesTotal {
         get => _bytesTotal;
         set => this.RaiseAndSetIfChanged(ref _bytesTotal, value);
     }
 
-    public long RecordsProcessed
-    {
+    public long RecordsProcessed {
         get => _recordsProcessed;
-        set
-        {
+        set {
             this.RaiseAndSetIfChanged(ref _recordsProcessed, value);
             RaiseComputedStateProperties();
         }
     }
 
-    public double RecordsPerSecond
-    {
+    public double RecordsPerSecond {
         get => _recordsPerSecond;
-        set
-        {
+        set {
             this.RaiseAndSetIfChanged(ref _recordsPerSecond, value);
             RaiseComputedStateProperties();
         }
     }
 
-    public double? EtaSeconds
-    {
+    public double? EtaSeconds {
         get => _etaSeconds;
         set => this.RaiseAndSetIfChanged(ref _etaSeconds, value);
     }
@@ -216,11 +202,9 @@ public class StagedSourceItemViewModel : ReactiveObject
 
     public bool CanEdit => Phase is "Queued" or "Completed" or "Skipped" or "Failed";
 
-    public bool IsSniffing
-    {
+    public bool IsSniffing {
         get => _isSniffing;
-        set
-        {
+        set {
             this.RaiseAndSetIfChanged(ref _isSniffing, value);
             RaiseComputedStateProperties();
             RaiseOverrideProperties();
@@ -235,18 +219,15 @@ public class StagedSourceItemViewModel : ReactiveObject
 
     public ObservableCollection<FeedbackSuggestionViewModel> FeedbackSuggestions { get; }
 
-    public DetectionChoiceViewModel? SelectedDetectionChoice
-    {
+    public DetectionChoiceViewModel? SelectedDetectionChoice {
         get => _selectedDetectionChoice;
-        set
-        {
+        set {
             var changed = !EqualityComparer<DetectionChoiceViewModel?>.Default.Equals(_selectedDetectionChoice, value);
             this.RaiseAndSetIfChanged(ref _selectedDetectionChoice, value);
             if (!changed)
                 return;
 
-            if (!_updatingSelectionInternally)
-            {
+            if (!_updatingSelectionInternally) {
                 _isResumePending = false;
                 _isDetectionUserConfirmed = value is not null;
                 _requiresDetectionReview = false;
@@ -263,55 +244,45 @@ public class StagedSourceItemViewModel : ReactiveObject
         }
     }
 
-    public EncodingChoiceViewModel? SelectedEncodingChoice
-    {
+    public EncodingChoiceViewModel? SelectedEncodingChoice {
         get => _selectedEncodingChoice;
-        set
-        {
+        set {
             this.RaiseAndSetIfChanged(ref _selectedEncodingChoice, value);
             RaiseOverrideProperties();
             RaiseComputedStateProperties();
         }
     }
 
-    public DelimiterChoiceViewModel? SelectedDelimiterChoice
-    {
+    public DelimiterChoiceViewModel? SelectedDelimiterChoice {
         get => _selectedDelimiterChoice;
-        set
-        {
+        set {
             this.RaiseAndSetIfChanged(ref _selectedDelimiterChoice, value);
             RaiseOverrideProperties();
             RaiseComputedStateProperties();
         }
     }
 
-    public bool CsvHasHeader
-    {
+    public bool CsvHasHeader {
         get => _csvHasHeader;
-        set
-        {
+        set {
             this.RaiseAndSetIfChanged(ref _csvHasHeader, value);
             RaiseOverrideProperties();
             RaiseComputedStateProperties();
         }
     }
 
-    public string TimestampOverrideText
-    {
+    public string TimestampOverrideText {
         get => _timestampOverrideText;
-        set
-        {
+        set {
             this.RaiseAndSetIfChanged(ref _timestampOverrideText, value);
             RaiseOverrideProperties();
             RaiseComputedStateProperties();
         }
     }
 
-    public string TimezoneOverrideText
-    {
+    public string TimezoneOverrideText {
         get => _timezoneOverrideText;
-        set
-        {
+        set {
             this.RaiseAndSetIfChanged(ref _timezoneOverrideText, value);
             RaiseOverrideProperties();
             RaiseComputedStateProperties();
@@ -320,21 +291,17 @@ public class StagedSourceItemViewModel : ReactiveObject
 
     public bool HasDetectionChoice => SelectedDetectionChoice is not null;
 
-    public string DetectionStatus
-    {
+    public string DetectionStatus {
         get => _detectionStatus;
-        set
-        {
+        set {
             this.RaiseAndSetIfChanged(ref _detectionStatus, value);
             RaiseComputedStateProperties();
         }
     }
 
-    public bool RequiresDetectionReview
-    {
+    public bool RequiresDetectionReview {
         get => _requiresDetectionReview;
-        private set
-        {
+        private set {
             this.RaiseAndSetIfChanged(ref _requiresDetectionReview, value);
             RaiseComputedStateProperties();
         }
@@ -351,11 +318,9 @@ public class StagedSourceItemViewModel : ReactiveObject
 
     public bool HasDetectionNotes => !string.IsNullOrWhiteSpace(DetectionNotes);
 
-    public string FilenameTemplateKey
-    {
+    public string FilenameTemplateKey {
         get => _filenameTemplateKey;
-        private set
-        {
+        private set {
             this.RaiseAndSetIfChanged(ref _filenameTemplateKey, value);
             RaiseComputedStateProperties();
         }
@@ -382,24 +347,21 @@ public class StagedSourceItemViewModel : ReactiveObject
         SelectedDetectionChoice?.Detection.Boundary is CsvBoundary;
 
     public string TimestampOverrideLabel =>
-        SelectedDetectionChoice?.Detection.Boundary switch
-        {
+        SelectedDetectionChoice?.Detection.Boundary switch {
             CsvBoundary => "Timestamp field(s)",
             JsonNdBoundary => "Timestamp field",
             _ => "Timestamp"
         };
 
     public string TimestampOverrideWatermark =>
-        SelectedDetectionChoice?.Detection.Boundary switch
-        {
+        SelectedDetectionChoice?.Detection.Boundary switch {
             CsvBoundary => "Column0 + Column1 or Timestamp",
             JsonNdBoundary => "timestamp or nested.path",
             _ => string.Empty
         };
 
     public string TimestampOverrideHint =>
-        SelectedDetectionChoice?.Detection.Boundary switch
-        {
+        SelectedDetectionChoice?.Detection.Boundary switch {
             CsvBoundary => "Use one field or multiple fields joined with '+' or ','.",
             JsonNdBoundary => "Enter the JSON field path to use as the timestamp source.",
             _ => string.Empty
@@ -431,10 +393,8 @@ public class StagedSourceItemViewModel : ReactiveObject
                 ? "Sniffing timestamp, timezone, encoding, and structure..."
                 : DetectionStatus);
 
-    public string ConfidenceDisplay
-    {
-        get
-        {
+    public string ConfidenceDisplay {
+        get {
             if (IsDirectory)
                 return "N/A";
             if (IsSniffing)
@@ -445,10 +405,8 @@ public class StagedSourceItemViewModel : ReactiveObject
         }
     }
 
-    public string DetectionBadge
-    {
-        get
-        {
+    public string DetectionBadge {
+        get {
             if (IsDirectory)
                 return "Folder";
             if (IsSniffing)
@@ -476,10 +434,8 @@ public class StagedSourceItemViewModel : ReactiveObject
         }
     }
 
-    public string QueueSummary
-    {
-        get
-        {
+    public string QueueSummary {
+        get {
             var parts = new List<string>();
             if (_isResumePending)
                 parts.Add("Ready to resume interrupted ingest");
@@ -530,8 +486,7 @@ public class StagedSourceItemViewModel : ReactiveObject
 
     public bool TryGetSelectedDetection(out DetectionResult detection)
     {
-        if (TryBuildSelectedOverride(out var formatOverride))
-        {
+        if (TryBuildSelectedOverride(out var formatOverride)) {
             detection = formatOverride.Detection;
             return true;
         }
@@ -660,19 +615,15 @@ public class StagedSourceItemViewModel : ReactiveObject
         BytesTotal = bytesTotal;
         RecordsProcessed = recordsProcessed;
 
-        if (isReset)
-        {
+        if (isReset) {
             _progressStartedUtc = null;
             RecordsPerSecond = 0;
             EtaSeconds = null;
-        }
-        else
-        {
+        } else {
             if (!_progressStartedUtc.HasValue && (bytesProcessed > 0 || recordsProcessed > 0))
                 _progressStartedUtc = now;
 
-            if (_progressStartedUtc.HasValue)
-            {
+            if (_progressStartedUtc.HasValue) {
                 var elapsed = (now - _progressStartedUtc.Value).TotalSeconds;
                 if (elapsed >= MinStableRateWindow.TotalSeconds && recordsProcessed > 0)
                     RecordsPerSecond = recordsProcessed / elapsed;
@@ -687,9 +638,7 @@ public class StagedSourceItemViewModel : ReactiveObject
                     EtaSeconds = Math.Max((bytesTotal - bytesProcessed) / bytesPerSecond, 1);
                 else
                     EtaSeconds = null;
-            }
-            else
-            {
+            } else {
                 RecordsPerSecond = 0;
                 EtaSeconds = null;
             }
@@ -706,8 +655,7 @@ public class StagedSourceItemViewModel : ReactiveObject
 
     private void ResetOverrideEditorFromSelection()
     {
-        if (SelectedDetectionChoice is null)
-        {
+        if (SelectedDetectionChoice is null) {
             _selectedEncodingChoice = null;
             _selectedDelimiterChoice = null;
             _csvHasHeader = false;
@@ -719,14 +667,11 @@ public class StagedSourceItemViewModel : ReactiveObject
 
         _selectedEncodingChoice = EncodingChoices.FirstOrDefault(choice => choice.CodePage == SelectedDetectionChoice.EncodingCodePage)
             ?? EncodingChoices.FirstOrDefault();
-        if (SelectedDetectionChoice.Detection.Boundary is CsvBoundary csv)
-        {
+        if (SelectedDetectionChoice.Detection.Boundary is CsvBoundary csv) {
             _selectedDelimiterChoice = DelimiterChoices.FirstOrDefault(choice => choice.Value == csv.Delimiter)
                 ?? DelimiterChoices.FirstOrDefault();
             _csvHasHeader = csv.HasHeader;
-        }
-        else
-        {
+        } else {
             _selectedDelimiterChoice = null;
             _csvHasHeader = false;
         }
@@ -740,8 +685,7 @@ public class StagedSourceItemViewModel : ReactiveObject
         var detection = choice.Detection;
         var notes = AppendOverrideNotes(detection.Notes);
 
-        return detection.Boundary switch
-        {
+        return detection.Boundary switch {
             CsvBoundary csv => new DetectionResult(
                 detection.Confidence,
                 BuildCsvBoundaryOverride(choice, csv),
@@ -770,8 +714,7 @@ public class StagedSourceItemViewModel : ReactiveObject
         if (!TryParseTimeBasisOverride(TimezoneOverrideText, out _))
             return "Timezone override must be blank, UTC, Local, UTC+/-HH:MM, or a valid timezone ID.";
 
-        return choice.Detection.Boundary switch
-        {
+        return choice.Detection.Boundary switch {
             CsvBoundary when SelectedDelimiterChoice is null =>
                 "Select a CSV delimiter.",
             CsvBoundary when ParseTimestampOverrideFields(TimestampOverrideText).Length == 0 =>
@@ -797,8 +740,7 @@ public class StagedSourceItemViewModel : ReactiveObject
         if (SelectedEncodingChoice is not null)
             parts.Add(SelectedEncodingChoice.Label);
 
-        if (choice.Detection.Boundary is CsvBoundary)
-        {
+        if (choice.Detection.Boundary is CsvBoundary) {
             if (SelectedDelimiterChoice is not null)
                 parts.Add(SelectedDelimiterChoice.Label);
 
@@ -865,10 +807,8 @@ public class StagedSourceItemViewModel : ReactiveObject
     private static string[] ParseTimestampOverrideFields(string value) =>
         value.Split(['+', ','], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
-    private bool HasUserEditedRecipe
-    {
-        get
-        {
+    private bool HasUserEditedRecipe {
+        get {
             if (SelectedDetectionChoice is not { } choice)
                 return false;
 
@@ -882,13 +822,11 @@ public class StagedSourceItemViewModel : ReactiveObject
                 && !string.Equals(
                     NormalizeTimestampOverrideText(TimestampOverrideText),
                     NormalizeTimestampOverrideText(ExtractTimestampOverrideValue(choice.Detection)),
-                    StringComparison.OrdinalIgnoreCase))
-            {
+                    StringComparison.OrdinalIgnoreCase)) {
                 return true;
             }
 
-            if (choice.Detection.Boundary is CsvBoundary csv)
-            {
+            if (choice.Detection.Boundary is CsvBoundary csv) {
                 if ((SelectedDelimiterChoice?.Value ?? csv.Delimiter) != csv.Delimiter)
                     return true;
 
@@ -967,8 +905,7 @@ public class StagedSourceItemViewModel : ReactiveObject
         if (timeBasisOverride is null)
             return "session timezone";
 
-        return timeBasisOverride.Basis switch
-        {
+        return timeBasisOverride.Basis switch {
             TimeBasis.Utc => "UTC",
             TimeBasis.Local => "Local",
             TimeBasis.Zone when !string.IsNullOrWhiteSpace(timeBasisOverride.TimeZoneId) => timeBasisOverride.TimeZoneId!,
@@ -985,32 +922,27 @@ public class StagedSourceItemViewModel : ReactiveObject
 
         var trimmed = value.Trim();
         if (trimmed.Equals("session", StringComparison.OrdinalIgnoreCase)
-            || trimmed.Equals("session default", StringComparison.OrdinalIgnoreCase))
-        {
+            || trimmed.Equals("session default", StringComparison.OrdinalIgnoreCase)) {
             return true;
         }
 
-        if (trimmed.Equals("local", StringComparison.OrdinalIgnoreCase))
-        {
+        if (trimmed.Equals("local", StringComparison.OrdinalIgnoreCase)) {
             overrideConfig = new TimeBasisConfig(TimeBasis.Local);
             return true;
         }
 
         if (trimmed.Equals("utc", StringComparison.OrdinalIgnoreCase)
-            || trimmed.Equals("etc/utc", StringComparison.OrdinalIgnoreCase))
-        {
+            || trimmed.Equals("etc/utc", StringComparison.OrdinalIgnoreCase)) {
             overrideConfig = new TimeBasisConfig(TimeBasis.Utc);
             return true;
         }
 
-        if (TryParseFixedOffset(trimmed, out var offsetMinutes))
-        {
+        if (TryParseFixedOffset(trimmed, out var offsetMinutes)) {
             overrideConfig = new TimeBasisConfig(TimeBasis.FixedOffset, offsetMinutes);
             return true;
         }
 
-        if (SessionDefaults.IsValidTimezoneId(trimmed))
-        {
+        if (SessionDefaults.IsValidTimezoneId(trimmed)) {
             overrideConfig = new TimeBasisConfig(TimeBasis.Zone, TimeZoneId: trimmed);
             return true;
         }
@@ -1026,8 +958,7 @@ public class StagedSourceItemViewModel : ReactiveObject
             return false;
 
         if (!int.TryParse(match.Groups["hours"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var hours)
-            || !int.TryParse(match.Groups["minutes"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var minutes))
-        {
+            || !int.TryParse(match.Groups["minutes"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var minutes)) {
             return false;
         }
 
@@ -1053,13 +984,11 @@ public class StagedSourceItemViewModel : ReactiveObject
 
         if (SelectedEncodingChoice is not null
             && SelectedDetectionChoice is not null
-            && SelectedEncodingChoice.CodePage != SelectedDetectionChoice.EncodingCodePage)
-        {
+            && SelectedEncodingChoice.CodePage != SelectedDetectionChoice.EncodingCodePage) {
             edits.Add($"encoding={SelectedEncodingChoice.Label}");
         }
 
-        if (SelectedDetectionChoice?.Detection.Boundary is CsvBoundary csv)
-        {
+        if (SelectedDetectionChoice?.Detection.Boundary is CsvBoundary csv) {
             if (SelectedDelimiterChoice is not null && SelectedDelimiterChoice.Value != csv.Delimiter)
                 edits.Add($"delimiter={SelectedDelimiterChoice.Label}");
 

@@ -1,4 +1,5 @@
 using DuckDB.NET.Data;
+
 using ItomoriLog.Core.Model;
 
 namespace ItomoriLog.Core.Query;
@@ -30,15 +31,13 @@ public sealed class SkipsQuery
         var whereClauses = new List<string>();
         var paramIndex = 1;
 
-        if (reasonCodeFilter is not null)
-        {
+        if (reasonCodeFilter is not null) {
             whereClauses.Add($"reason_code = ${paramIndex}");
             cmd.Parameters.Add(new DuckDBParameter { Value = reasonCodeFilter.Value.ToString() });
             paramIndex++;
         }
 
-        if (sourcePathFilter is not null)
-        {
+        if (sourcePathFilter is not null) {
             whereClauses.Add($"logical_source_id = ${paramIndex}");
             cmd.Parameters.Add(new DuckDBParameter { Value = sourcePathFilter });
             paramIndex++;
@@ -66,8 +65,7 @@ public sealed class SkipsQuery
 
         var groups = new Dictionary<string, List<SkipSegmentSummary>>();
 
-        while (await reader.ReadAsync(ct))
-        {
+        while (await reader.ReadAsync(ct)) {
             var sourcePath = reader.GetString(0);
             var reasonCode = Enum.Parse<SkipReasonCode>(reader.GetString(1));
             var startOffset = reader.IsDBNull(2) ? (long?)null : reader.GetInt64(2);
@@ -75,8 +73,7 @@ public sealed class SkipsQuery
             var recordCount = reader.GetInt64(4);
             var samplePrefix = reader.IsDBNull(5) ? null : reader.GetString(5);
 
-            if (!groups.TryGetValue(sourcePath, out var list))
-            {
+            if (!groups.TryGetValue(sourcePath, out var list)) {
                 list = [];
                 groups[sourcePath] = list;
             }

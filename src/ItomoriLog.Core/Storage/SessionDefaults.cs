@@ -15,13 +15,10 @@ public static class SessionDefaults
         if (string.IsNullOrWhiteSpace(timezoneId))
             return false;
 
-        try
-        {
+        try {
             _ = TimeZoneInfo.FindSystemTimeZoneById(timezoneId);
             return true;
-        }
-        catch
-        {
+        } catch {
             return false;
         }
     }

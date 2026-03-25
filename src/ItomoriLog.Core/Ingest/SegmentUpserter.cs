@@ -95,8 +95,7 @@ public sealed class SegmentUpserter
             )
             """;
 
-        foreach (var row in segments)
-        {
+        foreach (var row in segments) {
             ct.ThrowIfCancellationRequested();
 
             cmd.Parameters.Clear();
