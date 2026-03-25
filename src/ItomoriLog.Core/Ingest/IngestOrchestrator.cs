@@ -14,6 +14,7 @@ public sealed class IngestOrchestrator
     private readonly DetectionEngine _detectionEngine;
     private readonly int _maxConcurrency;
     private readonly int _batchChannelCapacity;
+    private readonly int _batchesPerTransaction;
     private readonly IReadOnlyDictionary<string, FileFormatOverride> _formatOverrides;
 
     public IngestOrchestrator(
@@ -21,12 +22,14 @@ public sealed class IngestOrchestrator
         DetectionEngine? detectionEngine = null,
         int maxConcurrency = 8,
         int batchChannelCapacity = 16,
+        int batchesPerTransaction = 5,
         IReadOnlyDictionary<string, FileFormatOverride>? formatOverrides = null)
     {
         _connection = connection;
         _detectionEngine = detectionEngine ?? new DetectionEngine();
         _maxConcurrency = maxConcurrency;
         _batchChannelCapacity = batchChannelCapacity;
+        _batchesPerTransaction = batchesPerTransaction;
         _formatOverrides = formatOverrides ?? new Dictionary<string, FileFormatOverride>(StringComparer.OrdinalIgnoreCase);
     }
 
@@ -110,27 +113,58 @@ public sealed class IngestOrchestrator
                     SingleReader = true
                 });
 
-            // Consumer task: writes batches to DB
+            // Consumer task: writes batches to DB.
+            // Batches are accumulated up to _batchesPerTransaction (default 5 × 50 k = 250 k rows)
+            // before a single COMMIT.  Visibility is reported AFTER commit so the
+            // connection is free when the UI triggers a live browse refresh.
             var writerTask = Task.Run(async () => {
                 var inserter = new LogBatchInserter(_connection);
-                await foreach (var batch in channel.Reader.ReadAllAsync(ct)) {
-                    await ExecuteInTransactionAsync(async token => {
-                        await inserter.InsertBatchAsync(batch, token);
-                    }, ct);
+                var pending = new List<IReadOnlyList<LogRow>>(_batchesPerTransaction);
 
-                    var totalCommitted = Interlocked.Add(ref totalRows, batch.Count);
-                    if (visibility is not null && batch.Count > 0) {
+                async Task CommitPendingAsync(CancellationToken token)
+                {
+                    if (pending.Count == 0) return;
+                    await ExecuteInTransactionAsync(async t => {
+                        foreach (var b in pending)
+                            await inserter.InsertBatchAsync(b, t);
+                    }, token);
+
+                    // Aggregate stats and report AFTER commit — the connection is now
+                    // free and the data is actually queryable by the live browse refresh.
+                    var committed = 0;
+                    string? lastSourcePath = null;
+                    foreach (var b in pending) {
+                        committed += b.Count;
+                        if (b.Count > 0) lastSourcePath = b[0].SourcePath;
+                    }
+                    pending.Clear();
+
+                    var totalCommitted = Interlocked.Add(ref totalRows, committed);
+                    if (visibility is not null && committed > 0 && lastSourcePath is not null) {
                         visibility.Report(new IngestVisibilityUpdate(
-                            SourcePath: batch[0].SourcePath,
-                            RowsCommitted: batch.Count,
+                            SourcePath: lastSourcePath,
+                            RowsCommitted: committed,
                             TotalRowsCommitted: totalCommitted));
                     }
                 }
+
+                await foreach (var batch in channel.Reader.ReadAllAsync(ct)) {
+                    pending.Add(batch);
+
+                    if (pending.Count >= _batchesPerTransaction)
+                        await CommitPendingAsync(ct);
+                }
+
+                await CommitPendingAsync(ct);
             }, ct);
 
-            // Producer tasks: detect + read + extract per file
+            // Producer tasks: detect + read + extract per file.
+            // Wrapped in Task.Run so the record-parsing loops execute on thread
+            // pool threads instead of the caller's SynchronizationContext (the UI
+            // thread).  Without this, a fast consumer means WriteAsync rarely
+            // blocks, so the synchronous parsing loop never yields the UI thread.
             var semaphore = new SemaphoreSlim(_maxConcurrency);
-            var producerTasks = entries.Select(async entry => {
+            var producerTasks = entries.Select(entry => Task.Run(async () => {
                 await semaphore.WaitAsync(ct);
                 try {
                     var segmentRow = await ProcessFileAsync(
@@ -150,7 +184,7 @@ public sealed class IngestOrchestrator
                 } finally {
                     semaphore.Release();
                 }
-            }).ToArray();
+            }, ct)).ToArray();
 
             await Task.WhenAll(producerTasks);
             channel.Writer.Complete();

@@ -219,6 +219,39 @@ public class CrashRecoveryServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RecoverInterruptedIngestionAsync_CleansInterruptedDataAndPreservesCompletedData()
+    {
+        var conn = await _factory.GetConnectionAsync();
+        await SchemaInitializer.EnsureSchemaAsync(conn);
+
+        await InsertRunAsync(conn, "run1", "running");
+        await InsertRunAsync(conn, "run2", "completed", DateTime.UtcNow.AddMinutes(-1));
+        await InsertRunSourceAsync(conn, "run1", @"C:\logs\app.log", 0);
+
+        await InsertSegmentAsync(conn, "seg-running", "src-running", "file-running", "run1");
+        await InsertSegmentAsync(conn, "seg-completed", "src-completed", "file-completed", "run2");
+
+        await InsertLogAsync(conn, "run1", "seg-orphan", @"C:\logs\app.log", 1);
+        await InsertLogAsync(conn, "run2", "seg-completed", @"C:\logs\done.log", 2);
+
+        await InsertSkipAsync(conn, "seg-running", "src-running", "file-running");
+        await InsertSkipAsync(conn, "seg-completed", "src-completed", "file-completed");
+
+        var svc = new CrashRecoveryService(_tempDir);
+        var resumablePaths = await svc.RecoverInterruptedIngestionAsync(conn);
+
+        resumablePaths.Should().ContainSingle().Which.Should().Be(@"C:\logs\app.log");
+        (await ReadRunStatusAsync(conn, "run1")).Should().Be("abandoned");
+        (await ReadCountAsync(conn, "SELECT COUNT(*) FROM logs WHERE ingest_run_id = 'run1'")).Should().Be(0);
+        (await ReadCountAsync(conn, "SELECT COUNT(*) FROM segments WHERE last_ingest_run_id = 'run1'")).Should().Be(0);
+        (await ReadCountAsync(conn, "SELECT COUNT(*) FROM skips WHERE segment_id = 'seg-running'")).Should().Be(0);
+
+        (await ReadCountAsync(conn, "SELECT COUNT(*) FROM logs WHERE ingest_run_id = 'run2'")).Should().Be(1);
+        (await ReadCountAsync(conn, "SELECT COUNT(*) FROM segments WHERE last_ingest_run_id = 'run2'")).Should().Be(1);
+        (await ReadCountAsync(conn, "SELECT COUNT(*) FROM skips WHERE segment_id = 'seg-completed'")).Should().Be(1);
+    }
+
+    [Fact]
     public void IsProcessRunning_CurrentProcess_ReturnsTrue()
     {
         CrashRecoveryService.IsProcessRunning(Environment.ProcessId).Should().BeTrue();
@@ -234,5 +267,157 @@ public class CrashRecoveryServiceTests : IDisposable
     {
         _factory.Dispose();
         try { Directory.Delete(_tempDir, recursive: true); } catch { }
+    }
+
+    private static async Task InsertRunAsync(
+        DuckDB.NET.Data.DuckDBConnection conn,
+        string runId,
+        string status,
+        DateTime? completedUtc = null)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO ingest_runs (run_id, started_utc, completed_utc, status)
+            VALUES ($1, $2, $3, $4)
+            """;
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = runId });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = DateTime.UtcNow.AddMinutes(-5) });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = completedUtc.HasValue ? (object)completedUtc.Value : DBNull.Value });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = status });
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private static async Task InsertRunSourceAsync(
+        DuckDB.NET.Data.DuckDBConnection conn,
+        string runId,
+        string sourcePath,
+        int sourceOrder)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO ingest_run_sources (run_id, source_path, source_order)
+            VALUES ($1, $2, $3)
+            """;
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = runId });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = sourcePath });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = sourceOrder });
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private static async Task InsertSegmentAsync(
+        DuckDB.NET.Data.DuckDBConnection conn,
+        string segmentId,
+        string logicalSourceId,
+        string physicalFileId,
+        string runId)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO segments (segment_id, logical_source_id, physical_file_id, row_count, last_ingest_run_id, active)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            """;
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = segmentId });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = logicalSourceId });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = physicalFileId });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = 1L });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = runId });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = true });
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private static async Task InsertLogAsync(
+        DuckDB.NET.Data.DuckDBConnection conn,
+        string runId,
+        string segmentId,
+        string sourcePath,
+        long recordIndex)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO logs (
+                timestamp_utc,
+                timestamp_basis,
+                timestamp_effective_offset_minutes,
+                timestamp_original,
+                logical_source_id,
+                source_path,
+                physical_file_id,
+                segment_id,
+                ingest_run_id,
+                record_index,
+                level,
+                message,
+                fields
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+            )
+            """;
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = DateTime.UtcNow });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = "Utc" });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = 0 });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = "2024-01-01T00:00:00Z" });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = "logical-source" });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = sourcePath });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = "physical-file" });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = segmentId });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = runId });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = recordIndex });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = "INFO" });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = $"Message {recordIndex}" });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = DBNull.Value });
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private static async Task InsertSkipAsync(
+        DuckDB.NET.Data.DuckDBConnection conn,
+        string segmentId,
+        string logicalSourceId,
+        string physicalFileId)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO skips (
+                session_id,
+                logical_source_id,
+                physical_file_id,
+                segment_id,
+                segment_seq,
+                start_line,
+                end_line,
+                start_offset,
+                end_offset,
+                reason_code,
+                reason_detail,
+                sample_prefix,
+                detector_profile_id,
+                utc_logged_at
+            ) VALUES (
+                NULL, $1, $2, $3, 0, NULL, NULL, NULL, NULL, 'TimeParse', NULL, NULL, NULL, $4
+            )
+            """;
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = logicalSourceId });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = physicalFileId });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = segmentId });
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = DateTime.UtcNow });
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private static async Task<long> ReadCountAsync(
+        DuckDB.NET.Data.DuckDBConnection conn,
+        string sql)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        return Convert.ToInt64(await cmd.ExecuteScalarAsync());
+    }
+
+    private static async Task<string> ReadRunStatusAsync(
+        DuckDB.NET.Data.DuckDBConnection conn,
+        string runId)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT status FROM ingest_runs WHERE run_id = $1";
+        cmd.Parameters.Add(new DuckDB.NET.Data.DuckDBParameter { Value = runId });
+        return (string)(await cmd.ExecuteScalarAsync())!;
     }
 }

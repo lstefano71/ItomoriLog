@@ -73,13 +73,7 @@ public sealed class CrashRecoveryService
 
     public async Task<CrashRecoveryStatus> CheckAsync(DuckDBConnection connection, CancellationToken ct = default)
     {
-        using var cmd = connection.CreateCommand();
-        cmd.CommandText = "SELECT run_id FROM ingest_runs WHERE status = 'running'";
-        using var reader = await cmd.ExecuteReaderAsync(ct);
-
-        var incompleteRuns = new List<string>();
-        while (await reader.ReadAsync(ct))
-            incompleteRuns.Add(reader.GetString(0));
+        var incompleteRuns = await ReadRunningRunIdsAsync(connection, ct);
 
         var resumableSourcePaths = await ReadResumableSourcePathsAsync(connection, ct);
         var segmentCount = 0;
@@ -100,16 +94,8 @@ public sealed class CrashRecoveryService
 
     public async Task MarkRunsAbandonedAsync(DuckDBConnection connection, CancellationToken ct = default)
     {
-        using var cmd = connection.CreateCommand();
-        cmd.CommandText = """
-            UPDATE ingest_runs
-            SET status = 'abandoned', completed_utc = $1
-            WHERE status = 'running'
-            """;
-        cmd.Parameters.Add(new DuckDBParameter { Value = DateTime.UtcNow });
-        await cmd.ExecuteNonQueryAsync(ct);
-
-        ReleaseLock();
+        var runIds = await ReadRunningRunIdsAsync(connection, ct);
+        await MarkRunsAbandonedAsync(connection, runIds, releaseLock: true, ct);
     }
 
     public async Task<IReadOnlyList<string>> RecoverInterruptedIngestionAsync(
@@ -120,7 +106,12 @@ public sealed class CrashRecoveryService
         if (!status.CanResume)
             return [];
 
-        await MarkRunsAbandonedAsync(connection, ct);
+        await ExecuteInTransactionAsync(connection, async token => {
+            await CleanupInterruptedRunsAsync(connection, status.IncompleteRunIds, token);
+            await MarkRunsAbandonedAsync(connection, status.IncompleteRunIds, releaseLock: false, token);
+        }, ct);
+
+        ReleaseLock();
         return status.ResumableSourcePaths;
     }
 
@@ -156,5 +147,129 @@ public sealed class CrashRecoveryService
         while (await reader.ReadAsync(ct))
             results.Add(reader.GetString(0));
         return results;
+    }
+
+    private async Task MarkRunsAbandonedAsync(
+        DuckDBConnection connection,
+        IReadOnlyList<string> runIds,
+        bool releaseLock,
+        CancellationToken ct)
+    {
+        if (runIds.Count == 0) {
+            if (releaseLock)
+                ReleaseLock();
+            return;
+        }
+
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = $"""
+            UPDATE ingest_runs
+            SET status = 'abandoned', completed_utc = $1
+            WHERE run_id IN ({BuildParameterList(runIds.Count, 2)})
+            """;
+        cmd.Parameters.Add(new DuckDBParameter { Value = DateTime.UtcNow });
+        foreach (var runId in runIds)
+            cmd.Parameters.Add(new DuckDBParameter { Value = runId });
+        await cmd.ExecuteNonQueryAsync(ct);
+
+        if (releaseLock)
+            ReleaseLock();
+    }
+
+    private static async Task<IReadOnlyList<string>> ReadRunningRunIdsAsync(
+        DuckDBConnection connection,
+        CancellationToken ct)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT run_id FROM ingest_runs WHERE status = 'running'";
+        using var reader = await cmd.ExecuteReaderAsync(ct);
+
+        var runIds = new List<string>();
+        while (await reader.ReadAsync(ct))
+            runIds.Add(reader.GetString(0));
+
+        return runIds;
+    }
+
+    private static async Task CleanupInterruptedRunsAsync(
+        DuckDBConnection connection,
+        IReadOnlyList<string> runIds,
+        CancellationToken ct)
+    {
+        if (runIds.Count == 0)
+            return;
+
+        var runIdList = BuildParameterList(runIds.Count);
+
+        using (var skipsCmd = connection.CreateCommand()) {
+            skipsCmd.CommandText = $"""
+                DELETE FROM skips
+                WHERE segment_id IN (
+                    SELECT segment_id
+                    FROM segments
+                    WHERE last_ingest_run_id IN ({runIdList})
+                )
+                """;
+            foreach (var runId in runIds)
+                skipsCmd.Parameters.Add(new DuckDBParameter { Value = runId });
+            await skipsCmd.ExecuteNonQueryAsync(ct);
+        }
+
+        using (var logsCmd = connection.CreateCommand()) {
+            logsCmd.CommandText = $"""
+                DELETE FROM logs
+                WHERE ingest_run_id IN ({runIdList})
+                """;
+            foreach (var runId in runIds)
+                logsCmd.Parameters.Add(new DuckDBParameter { Value = runId });
+            await logsCmd.ExecuteNonQueryAsync(ct);
+        }
+
+        using var segmentsCmd = connection.CreateCommand();
+        segmentsCmd.CommandText = $"""
+            DELETE FROM segments
+            WHERE last_ingest_run_id IN ({runIdList})
+            """;
+        foreach (var runId in runIds)
+            segmentsCmd.Parameters.Add(new DuckDBParameter { Value = runId });
+        await segmentsCmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task ExecuteInTransactionAsync(
+        DuckDBConnection connection,
+        Func<CancellationToken, Task> action,
+        CancellationToken ct)
+    {
+        await ExecuteControlStatementAsync(connection, "BEGIN TRANSACTION", ct);
+        try {
+            await action(ct);
+            await ExecuteControlStatementAsync(connection, "COMMIT", ct);
+        } catch {
+            try {
+                await ExecuteControlStatementAsync(connection, "ROLLBACK", CancellationToken.None);
+            } catch {
+                // Preserve the original failure if rollback also fails.
+            }
+
+            throw;
+        }
+    }
+
+    private static async Task ExecuteControlStatementAsync(
+        DuckDBConnection connection,
+        string sql,
+        CancellationToken ct)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = sql;
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private static string BuildParameterList(int count, int startIndex = 1)
+    {
+        var placeholders = new string[count];
+        for (var i = 0; i < count; i++)
+            placeholders[i] = $"${startIndex + i}";
+        return string.Join(", ", placeholders);
     }
 }
